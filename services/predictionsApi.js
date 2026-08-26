@@ -1,4 +1,4 @@
-const API_BASE_URL = 'unibackend-production-a0f8.up.railway.app';
+const API_BASE_URL = 'https://unibackend-production-a0f8.up.railway.app';';
 /**
  * Obtiene el análisis predictivo completo para el Dashboard del Admin
  */
