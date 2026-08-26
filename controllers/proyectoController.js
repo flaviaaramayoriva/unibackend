@@ -532,10 +532,10 @@ const layout = layoutData[0] || null;
          a."texto_argumentacion" AS argumentacion
        FROM "evento_objetivos" eo
        JOIN "objetivos" o ON eo."idobjetivo"::integer = o."idobjetivo"
-       LEFT JOIN "tipos_objetivo" t ON o."idtipoobjetivo" = t."idtipoobjetivo" 
-       LEFT JOIN "objetivo_segmento" os ON o."idobjetivo" = os."idobjetivo"::integer
-       LEFT JOIN "segmento" s ON os."idsegmento" = s."idsegmento"
-       LEFT JOIN "argumentacion" a ON eo."idevento" = a."idevento"::integer
+        LEFT JOIN "tipos_objetivo" t ON o."idtipoobjetivo" = t."idtipoobjetivo" 
+        LEFT JOIN "objetivo_segmento" os ON o."idobjetivo" = os."idobjetivo"::integer
+        LEFT JOIN "segmento" s ON os."idsegmento"::integer = s."idsegmento"
+        LEFT JOIN "argumentacion" a ON eo."idevento" = a."idevento"::integer
        WHERE eo."idevento" = ?`,
       { replacements: [eventIdNum] }
     );
