@@ -295,7 +295,7 @@ async function generarPDFEvento(evento, usuario) {
   const layoutData = evento.Layout || evento.layout || null;
   if (layoutData && layoutData.url_imagen) {
     try {
-      const base = process.env.API_BASE_URL || 'https://unibackend-production.up.railway.app';
+      const base = process.env.API_BASE_URL || 'unibackend-production-a0f8.up.railway.app';
       const resp = await axios.get(`${base}/uploads/${layoutData.url_imagen}`, { responseType: 'arraybuffer', timeout: 8000 });
       layoutImageBuffer = Buffer.from(resp.data);
     } catch (e) { layoutImageBuffer = null; }
