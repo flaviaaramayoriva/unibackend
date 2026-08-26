@@ -54,10 +54,12 @@ const getDashboardStats = asyncHandler(async (req, res) => {
         ORDER BY aprobados DESC  -- ✅ Esto ordena por eventos APROBADOS
         LIMIT 10
 `, { type: sequelize.QueryTypes.SELECT }),
-      sequelize.query(`
+            sequelize.query(`
         SELECT DATE("fecha_aprobacion") as fecha, COUNT(*) as total
         FROM "evento"
-        WHERE "fecha_aprobacion" ::DATE >= CURRENT_DATE - INTERVAL '6 days'
+        WHERE "fecha_aprobacion" IS NOT NULL 
+          AND "fecha_aprobacion" != ''
+          AND "fecha_aprobacion"::DATE >= CURRENT_DATE - INTERVAL '6 days'
         GROUP BY DATE("fecha_aprobacion") 
         ORDER BY fecha ASC
       `, { type: sequelize.QueryTypes.SELECT })
