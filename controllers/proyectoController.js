@@ -178,9 +178,12 @@ const createEvento = async (req, res) => {
     );
     console.log('✅ Resultados insertados');
 
-    // 9. INSERTAR RECURSOS EXISTENTES
-    if (Array.isArray(data.recursos_existentes) && data.recursos_existentes.length > 0) {
-      const recursosData = data.recursos_existentes.map(id => [nuevoEventoId, id]);
+     if (Array.isArray(data.recursos_existentes) && data.recursos_existentes.length > 0) {
+      const recursosData = data.recursos_existentes.map(r => [
+        nuevoEventoId, 
+        r.idrecurso || r.id // Extrae solo el ID numérico
+      ]);
+      
       await sequelize.query(
         `INSERT INTO evento_recurso (idevento, idrecurso) VALUES ${recursosData.map(() => '(?, ?)').join(', ')}`,
         { replacements: recursosData.flat(), transaction: t }
@@ -188,7 +191,6 @@ const createEvento = async (req, res) => {
       console.log('✅ Recursos existentes vinculados:', data.recursos_existentes.length);
     }
 
-    // 10. INSERTAR RECURSOS NUEVOS
     if (Array.isArray(data.recursos_nuevos) && data.recursos_nuevos.length > 0) {
       for (const recurso of data.recursos_nuevos) {
         const [result] = await sequelize.query(
