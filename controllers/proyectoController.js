@@ -2375,7 +2375,7 @@ const estudiantesInscritosEnEvento = asyncHandler(async (req, res) => {
         JOIN estudiante est ON est.idestudiante = ei.idestudiante
         JOIN usuario u ON u.idusuario = est.idusuario
         JOIN evento e ON e.idevento = ei.idevento
-        WHERE u.facultad_id = :facultadId  -- ✅ CAMBIADO
+        WHERE u.facultad_id = :facultadId 
         ORDER BY e.fechaevento DESC`,
       { replacements: { facultadId }, type: QueryTypes.SELECT }
     );
