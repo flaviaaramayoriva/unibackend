@@ -408,7 +408,6 @@ const estudiantesInscritosEnEvento = asyncHandler(async (req, res) => {
 
     const facultadId = usuario[0].facultad_id;
     
-    // ✅ CORREGIDO: 'evento_inscripciones' (plural) para coincidir con la tabla real
     const inscripciones = await sequelize.query(
       `SELECT e.idevento, e.nombreevento, e.fechaevento,
               est.idestudiante, u.nombre, u.apellidopat, u.apellidomat,

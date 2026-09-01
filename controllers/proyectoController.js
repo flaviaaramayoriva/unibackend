@@ -1664,7 +1664,6 @@ const getEventosAprobadosPorFacultadYFecha = asyncHandler(async (req, res) => {
 
     console.log(`🔍 [${userRole}] userId: ${userId}, facultad_id query:`, facultadId);
 
-    // Obtener facultad_id si no viene en query
     if (!facultadId) {
       console.log('⚠️ facultadId no proporcionado, buscando...');
       
@@ -1693,15 +1692,14 @@ const getEventosAprobadosPorFacultadYFecha = asyncHandler(async (req, res) => {
 
     console.log('✅ Buscando eventos para facultad_id:', facultadId);
 
-    // ✅ FILTRAR POR FECHA: Solo eventos de hoy o futuros
     const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
-    console.log('📅 Fecha de hoy:', hoy.toISOString());
+    const hoyStr = hoy.toLocaleDateString('en-CA'); // Formato seguro: 'YYYY-MM-DD'
+    console.log('📅 Fecha de hoy (local, YYYY-MM-DD):', hoyStr);
 
     const eventos = await Evento.findAll({
       where: { 
         estado: 'aprobado',
-        fechaevento: { [Op.gte]: hoy }
+        fechaevento: { [Op.gte]: hoyStr }
       },
       distinct: true,
       attributes: { include: ['idfase'] },
@@ -1723,10 +1721,10 @@ const getEventosAprobadosPorFacultadYFecha = asyncHandler(async (req, res) => {
           }]
         }]
       }],
-      order: [['fechaevento', 'ASC']]
+      order: [['fechaevento', 'ASC'], ['horaevento', 'ASC']]
     });
 
-    console.log(`✅ ${eventos.length} eventos encontrados`);
+    console.log(`✅ ${eventos.length} eventos encontrados en la BD`);
 
     const eventosFormateados = eventos.map(event => {
       const creador = event.academicoCreador;
@@ -1739,7 +1737,7 @@ const getEventosAprobadosPorFacultadYFecha = asyncHandler(async (req, res) => {
         nombreevento: event.nombreevento,
         description: event.descripcion || 'Sin descripción',
         date: event.fechaevento ? new Date(event.fechaevento).toLocaleDateString('es-ES') : 'N/A',
-        fechaevento: event.fechaevento,
+        fechaevento: event.fechaevento, // Se envía tal cual (YYYY-MM-DD)
         fecha_inicio: event.fechaevento,
         time: event.horaevento || 'N/A',
         horaevento: event.horaevento,
