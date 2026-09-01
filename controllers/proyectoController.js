@@ -2366,7 +2366,7 @@ const estudiantesInscritosEnEvento = asyncHandler(async (req, res) => {
 
     const facultadId = usuario[0].facultad_id;
     
-    // ✅ CORREGIDO: 'evento_inscripciones' (plural) para coincidir con la tabla real
+    // ✅ CORRECCIÓN: Cambiar est.facultad_id por u.facultad_id
     const inscripciones = await sequelize.query(
       `SELECT e.idevento, e.nombreevento, e.fechaevento,
               est.idestudiante, u.nombre, u.apellidopat, u.apellidomat,
@@ -2375,7 +2375,7 @@ const estudiantesInscritosEnEvento = asyncHandler(async (req, res) => {
        JOIN estudiante est ON est.idestudiante = ei.idestudiante
        JOIN usuario u ON u.idusuario = est.idusuario
        JOIN evento e ON e.idevento = ei.idevento
-       WHERE est.facultad_id = :facultadId
+       WHERE u.facultad_id = :facultadId  -- ✅ CAMBIADO de est.facultad_id a u.facultad_id
        ORDER BY e.fechaevento DESC`,
       { replacements: { facultadId }, type: QueryTypes.SELECT }
     );
