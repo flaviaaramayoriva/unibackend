@@ -486,7 +486,7 @@ const getEstudiantesInscritosEvento = async (req, res) => {
   }
 };
 const actualizarDatosInscripcion = asyncHandler(async (req, res) => {
-  const { codigoestudiante, semestre, telefono } = req.body;
+  const { codigoestudiante, semestre, telefono, facultad_id } = req.body;
 
   if (!codigoestudiante || !semestre || !telefono) {
     return res.status(400).json({ message: 'Faltan datos: codigoestudiante, semestre y telefono son requeridos' });
@@ -494,23 +494,37 @@ const actualizarDatosInscripcion = asyncHandler(async (req, res) => {
 
   try {
     const models = getModels();
-    const { Estudiante } = models;
+    const { Estudiante, User } = models;
 
-    // 1. Buscamos si ya existe el registro
+    // 1. Buscamos si ya existe el registro de estudiante
     let estudiante = await Estudiante.findOne({ where: { idusuario: req.user.idusuario } });
 
     if (!estudiante) {
-      // 2. Si NO existe, lo CREAMOS automáticamente
       console.log(`[INFO] Creando registro de estudiante para usuario ID: ${req.user.idusuario}`);
+      
+      // 2. Obtenemos el facultad_id de forma segura (del body, del token o de la BD)
+      let facId = facultad_id || req.user.facultad_id;
+      
+      if (!facId) {
+        const usuario = await User.findByPk(req.user.idusuario, { attributes: ['facultad_id'] });
+        facId = usuario?.facultad_id;
+      }
+
+      if (!facId) {
+        return res.status(400).json({ message: 'No se pudo determinar la facultad del usuario. Contacta al administrador.' });
+      }
+
+      // 3. Creamos el registro incluyendo el facultad_id
       estudiante = await Estudiante.create({
         idusuario: req.user.idusuario,
         codigoestudiante,
         semestre,
         telefono,
-        estado: 'activo' // o el valor por defecto que uses
+        facultad_id: facId, // ✅ CAMPO CRÍTICO AGREGADO
+        estado: 'activo'
       });
     } else {
-      // 3. Si YA existe, lo ACTUALIZAMOS
+      // 4. Si YA existe, solo actualizamos los datos proporcionados
       await estudiante.update({ codigoestudiante, semestre, telefono });
     }
 
