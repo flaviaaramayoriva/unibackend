@@ -496,20 +496,30 @@ const actualizarDatosInscripcion = asyncHandler(async (req, res) => {
     const models = getModels();
     const { Estudiante } = models;
 
-    const estudiante = await Estudiante.findOne({ where: { idusuario: req.user.idusuario } });
+    // 1. Buscamos si ya existe el registro
+    let estudiante = await Estudiante.findOne({ where: { idusuario: req.user.idusuario } });
 
     if (!estudiante) {
-      return res.status(404).json({ message: 'No se encontró el registro de estudiante para este usuario' });
+      // 2. Si NO existe, lo CREAMOS automáticamente
+      console.log(`[INFO] Creando registro de estudiante para usuario ID: ${req.user.idusuario}`);
+      estudiante = await Estudiante.create({
+        idusuario: req.user.idusuario,
+        codigoestudiante,
+        semestre,
+        telefono,
+        estado: 'activo' // o el valor por defecto que uses
+      });
+    } else {
+      // 3. Si YA existe, lo ACTUALIZAMOS
+      await estudiante.update({ codigoestudiante, semestre, telefono });
     }
 
-    await estudiante.update({ codigoestudiante, semestre, telefono });
-
     res.json({
-      message: 'Datos actualizados correctamente',
+      message: 'Datos de inscripción guardados correctamente',
       estudiante: estudiante.toJSON(),
     });
   } catch (error) {
-    console.error('Error al actualizar datos de inscripción:', error);
+    console.error('Error al actualizar/crear datos de inscripción:', error);
     res.status(500).json({ message: 'Error interno del servidor', error: error.message });
   }
 });
