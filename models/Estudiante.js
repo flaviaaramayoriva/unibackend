@@ -37,15 +37,15 @@ module.exports = (sequelize,DataTypes)=>{
     },
     codigoestudiante: {
       type: DataTypes.STRING,
-      allowNull: false
+      allowNull: true
     },
     semestre: {
       type: DataTypes.STRING,
-      allowNull: false
+      allowNull: true
     },
     telefono: {
       type: DataTypes.INTEGER,
-      allowNull: false
+      allowNull: true
     },
   }, {
     tableName: 'estudiante',
