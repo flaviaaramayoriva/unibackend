@@ -1,5 +1,6 @@
 const asyncHandler = require('express-async-handler');
-const {analyzeEventChat} = require('../services/chatAnalysisService');
+const chatAnalysisService = require('../services/chatAnalysisService'); // ✅ Importar la instancia completa
+
 
 const analyzeChat = asyncHandler(async (req, res) => {
   const { eventId } = req.params;
@@ -8,7 +9,7 @@ const analyzeChat = asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'Se requiere el ID del evento' });
   }
 
-  const analysis = await analyzeEventChat(eventId);
+  const analysis = await chatAnalysisService.analyzeEventChat(eventId);
 
   res.json({
     success: true,
