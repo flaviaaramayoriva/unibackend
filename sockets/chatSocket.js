@@ -150,52 +150,71 @@ module.exports = (io) => {
     });
 
     // ==========================================
-    // 2. AQUÍ ESTÁ LA MAGIA: MODIFICACIÓN SEGURA
+    // 2. AQUÍ ESTÁ LA CORRECCIÓN: DETECCIÓN INTELIGENTE
     // ==========================================
     socket.on('send_message', async ({ eventoId, userId, role, userName, message }) => {
       const room = `evento_${eventoId}`;
       console.log('📩 [EVENTO] Mensaje:', { eventoId, userId, userName, message });
       
-      // A. Verificar si el mensaje es para el Bot IA
-      if (chatBotService.esPreguntaParaBot(message)) {
-        const pregunta = chatBotService.extraerPregunta(message);
+      // A. DETECCIÓN MEJORADA: Responde a preguntas naturales o con prefijos
+      const textoLower = message.toLowerCase().trim();
+      const esPregunta = 
+        textoLower.includes('¿') || 
+        textoLower.includes('?') ||
+        textoLower.startsWith('/pregunta') ||
+        textoLower.startsWith('/bot') ||
+        textoLower.startsWith('/ia') ||
+        textoLower.includes('@bot') ||
+        textoLower.includes('hora') ||
+        textoLower.includes('cuando') ||
+        textoLower.includes('donde') ||
+        textoLower.includes('lugar') ||
+        textoLower.includes('fecha') ||
+        textoLower.includes('certificado') ||
+        textoLower.includes('requisitos') ||
+        textoLower.includes('costo') ||
+        textoLower.includes('inscripcion');
+
+      if (esPregunta) {
+        console.log('🤖 [BOT] Detectada pregunta para IA:', message);
         
-        // Avisar al frontend que el bot está "escribiendo"
-        io.to(room).emit('bot_typing', { eventoId });
+        try {
+          const pregunta = chatBotService.extraerPregunta(message);
+          
+          // Avisar al frontend que el bot está "escribiendo"
+          io.to(room).emit('bot_typing', { eventoId });
 
-        // Generar respuesta con Brain.js
-        const respuesta = await chatBotService.generarRespuesta(pregunta);
+          // Generar respuesta con Brain.js (instantáneo, sin delay)
+          const respuesta = await chatBotService.generarRespuesta(pregunta);
+          console.log('✅ [BOT] Respuesta generada:', respuesta.respuesta);
 
-        // Responder después de 1 segundo para simular que escribe
-        setTimeout(async () => {
-          try {
-            const { getModels } = require('../models');
-            const { ChatMensaje } = getModels();
-            
-            // Guardar la interacción en la base de datos
-            await ChatMensaje.create({
-              idevento: parseInt(eventoId),
-              idusuario: 0, // 0 representa al bot
-              username: 'Asistente IA',
-              role: 'bot',
-              message: `[IA] P: ${pregunta} | R: ${respuesta.respuesta}`
-            });
+          // Enviar la burbuja del bot al chat
+          io.to(room).emit('receive_message', {
+            userId: 0,
+            userName: '🤖 Asistente IA',
+            role: 'bot',
+            message: respuesta.respuesta,
+            esBot: true, // ← ESTA BANDERA ES CLAVE PARA EL FRONTEND
+            timestamp: new Date().toISOString()
+          });
 
-            // Enviar la burbuja del bot al chat
-            io.to(room).emit('receive_message', {
-              userId: 0,
-              userName: '🤖 Asistente IA',
-              role: 'bot',
-              message: respuesta.respuesta,
-              esBot: true, // ← ESTA BANDERA ES CLAVE PARA EL FRONTEND
-              timestamp: new Date().toISOString()
-            });
-          } catch (e) {
-            console.error('❌ [BOT] Error:', e.message);
-          }
-        }, 1000);
+          // Guardar la interacción en la base de datos (en segundo plano, sin bloquear)
+          const { getModels } = require('../models');
+          const { ChatMensaje } = getModels();
+          
+          ChatMensaje.create({
+            idevento: parseInt(eventoId),
+            idusuario: 0, // 0 representa al bot
+            username: 'Asistente IA',
+            role: 'bot',
+            message: `[IA] P: ${pregunta} | R: ${respuesta.respuesta}`
+          }).catch(err => console.error('❌ [BOT] Error al guardar en BD:', err));
 
-        return; // ⛔ DETENER AQUÍ. No ejecuta el código de abajo para comandos del bot.
+        } catch (error) {
+          console.error('❌ [BOT] Error crítico:', error);
+        }
+        
+        // No usamos 'return' aquí para que el mensaje del usuario TAMBIÉN se guarde y muestre en el chat
       }
 
       // B. TU CÓDIGO ORIGINAL (INTACTO Y FUNCIONANDO PARA MENSAJES NORMALES)
