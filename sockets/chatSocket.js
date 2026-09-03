@@ -1,3 +1,6 @@
+// 1. Agregamos el servicio del bot al inicio del archivo
+const chatBotService = require('../services/chatBotService');
+
 module.exports = (io) => {
   const eventUsers = new Map();
   const privateRooms = new Map(); // Track private room members
@@ -11,7 +14,6 @@ module.exports = (io) => {
       socket.join(roomId);
       socket.data = { ...socket.data, roomId, isPrivate: true, userId, userName };
 
-      // Track room members
       if (!privateRooms.has(roomId)) {
         privateRooms.set(roomId, new Set());
       }
@@ -22,10 +24,7 @@ module.exports = (io) => {
         const { ChatMensaje } = getModels();
 
         const historial = await ChatMensaje.findAll({
-          where: {
-            idevento: 0,
-            room_id: roomId,
-          },
+          where: { idevento: 0, room_id: roomId },
           order: [['createdAt', 'ASC']],
           limit: 100
         });
@@ -46,7 +45,7 @@ module.exports = (io) => {
     });
 
     socket.on('send_private', async ({ roomId, userId, userName, role, message }) => {
-      console.log(' [PRIVADO] Enviando mensaje:', { roomId, userId, userName, message });
+      console.log('📩 [PRIVADO] Enviando mensaje:', { roomId, userId, userName, message });
       
       try {
         const { getModels } = require('../models');
@@ -98,15 +97,8 @@ module.exports = (io) => {
 
         if (eventoId !== 'general') {
           const [esMiembroComite, evento] = await Promise.all([
-            Comite.findOne({
-              where: {
-                idevento: parseInt(eventoId),
-                idusuario: parseInt(userId)
-              }
-            }),
-            Evento.findOne({
-              where: { idevento: parseInt(eventoId) }
-            })
+            Comite.findOne({ where: { idevento: parseInt(eventoId), idusuario: parseInt(userId) } }),
+            Evento.findOne({ where: { idevento: parseInt(eventoId) } })
           ]);
 
           const esCreador = evento && parseInt(evento.idacademico) === parseInt(userId);
@@ -152,15 +144,61 @@ module.exports = (io) => {
         console.log(`✅ [EVENTO] ${userName} (${role}) → sala ${room}`);
 
       } catch (e) {
-        console.warn('️ [EVENTO] Error en join_event:', e.message);
+        console.warn('⚠️ [EVENTO] Error en join_event:', e.message);
         socket.emit('history', []);
       }
     });
 
+    // ==========================================
+    // 2. AQUÍ ESTÁ LA MAGIA: MODIFICACIÓN SEGURA
+    // ==========================================
     socket.on('send_message', async ({ eventoId, userId, role, userName, message }) => {
       const room = `evento_${eventoId}`;
-      console.log(' [EVENTO] Mensaje:', { eventoId, userId, userName, message });
+      console.log('📩 [EVENTO] Mensaje:', { eventoId, userId, userName, message });
       
+      // A. Verificar si el mensaje es para el Bot IA
+      if (chatBotService.esPreguntaParaBot(message)) {
+        const pregunta = chatBotService.extraerPregunta(message);
+        
+        // Avisar al frontend que el bot está "escribiendo"
+        io.to(room).emit('bot_typing', { eventoId });
+
+        // Generar respuesta con Brain.js
+        const respuesta = await chatBotService.generarRespuesta(pregunta);
+
+        // Responder después de 1 segundo para simular que escribe
+        setTimeout(async () => {
+          try {
+            const { getModels } = require('../models');
+            const { ChatMensaje } = getModels();
+            
+            // Guardar la interacción en la base de datos
+            await ChatMensaje.create({
+              idevento: parseInt(eventoId),
+              idusuario: 0, // 0 representa al bot
+              username: 'Asistente IA',
+              role: 'bot',
+              message: `[IA] P: ${pregunta} | R: ${respuesta.respuesta}`
+            });
+
+            // Enviar la burbuja del bot al chat
+            io.to(room).emit('receive_message', {
+              userId: 0,
+              userName: '🤖 Asistente IA',
+              role: 'bot',
+              message: respuesta.respuesta,
+              esBot: true, // ← ESTA BANDERA ES CLAVE PARA EL FRONTEND
+              timestamp: new Date().toISOString()
+            });
+          } catch (e) {
+            console.error('❌ [BOT] Error:', e.message);
+          }
+        }, 1000);
+
+        return; // ⛔ DETENER AQUÍ. No ejecuta el código de abajo para comandos del bot.
+      }
+
+      // B. TU CÓDIGO ORIGINAL (INTACTO Y FUNCIONANDO PARA MENSAJES NORMALES)
       try {
         const { getModels } = require('../models');
         const { ChatMensaje } = getModels();
