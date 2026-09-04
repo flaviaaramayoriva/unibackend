@@ -932,7 +932,7 @@ const aprobarEvento = async (req, res) => {
       estado: 'aprobado',
        fecha_aprobacion: new Date()
     });
-     await enviarNotificacionTelegram({ idevento }, 'aprobado');
+     //await enviarNotificacionTelegram({ idevento }, 'aprobado');
 
        if (evento.idacademico) {
       try {
