@@ -15,7 +15,9 @@ class ChatBotService {
 
   entrenar() {
     const trainingData = [
-      { input: { hola: 1, buen: 1, hey: 1 }, output: { saludo: 1 } },
+      // ✅ FIX: se agregan variantes cortas de saludo (hi, ey) para que
+      // el vocabulario de la red las reconozca como parte de "saludo"
+      { input: { hola: 1, buen: 1, hey: 1, hi: 1, ey: 1, buenas: 1 }, output: { saludo: 1 } },
       { input: { hora: 1, cuando: 1, tiempo: 1, horario: 1 }, output: { hora: 1 } },
       { input: { lugar: 1, donde: 1, ubicacion: 1, sitio: 1 }, output: { lugar: 1 } },
       { input: { fecha: 1, dia: 1, cuan: 1 }, output: { fecha: 1 } },
@@ -88,10 +90,12 @@ class ChatBotService {
       const eventoInfo = eventoId ? await this.getEventoInfo(eventoId) : null;
 
       // Preparar input para la red neuronal
+      // ✅ FIX: antes se exigía length > 2, lo que descartaba saludos cortos
+      // válidos como "hi" o "ey". Ahora se permite desde 2 caracteres.
       const input = {};
       palabras.forEach(p => {
         const limpia = p.replace(/[.,!?;:]/g, '');
-        if (limpia.length > 2) input[limpia] = 1;
+        if (limpia.length >= 2) input[limpia] = 1;
       });
 
       const output = this.net.run(input);
@@ -343,7 +347,11 @@ class ChatBotService {
 
         default:
           // Búsqueda por palabras clave como fallback
-          if (palabras.some(p => ['hora', 'horario', 'tiempo'].includes(p))) {
+          // ✅ FIX: se agregan saludos cortos comunes para que "hi", "hey",
+          // "buenas" etc. no caigan siempre en el mensaje genérico
+          if (palabras.some(p => ['hola', 'hi', 'hey', 'buenas', 'ey', 'que tal', 'holi'].includes(p))) {
+            respuesta = `¡Hola! 👋 Soy tu asistente virtual del evento. Pregúntame sobre horarios, ubicación, certificados, costos o inscripciones.`;
+          } else if (palabras.some(p => ['hora', 'horario', 'tiempo'].includes(p))) {
             respuesta = eventoInfo 
               ? `⏰ El evento es a las ${eventoInfo.horaevento || 'por confirmar'} del día ${eventoInfo.fechaevento ? new Date(eventoInfo.fechaevento).toLocaleDateString('es-ES') : 'por confirmar'}.`
               : 'El horario está disponible en los detalles del evento.';
