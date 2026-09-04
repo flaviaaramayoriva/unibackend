@@ -149,75 +149,87 @@ module.exports = (io) => {
       }
     });
 
-    // ==========================================
-    // 2. AQUÍ ESTÁ LA CORRECCIÓN: DETECCIÓN INTELIGENTE
-    // ==========================================
-    socket.on('send_message', async ({ eventoId, userId, role, userName, message }) => {
+       socket.on('send_message', async ({ eventoId, userId, role, userName, message }) => {
       const room = `evento_${eventoId}`;
       console.log('📩 [EVENTO] Mensaje:', { eventoId, userId, userName, message });
       
-      // A. DETECCIÓN MEJORADA: Responde a preguntas naturales o con prefijos
       const textoLower = message.toLowerCase().trim();
+      
+      // ==========================================
+      // 1. PRIORIDAD: DETECTAR RECORDATORIOS
+      // ==========================================
+      if (textoLower.includes('recuérdame') || textoLower.includes('avísame')) {
+        console.log('⏰ [RECORDATORIO] Detectado:', message);
+        
+        // Aquí puedes emitir un evento al frontend para que abra el modal de recordatorios,
+        // o llamar directamente a tu función de crear recordatorio si la tienes a mano.
+        io.to(room).emit('receive_message', {
+          userId: 0,
+          userName: '🤖 Asistente IA',
+          role: 'bot',
+          message: '⏳ Para programar un recordatorio, por favor usa la sección de "Recordatorios" en la app o escribe: "Vincular mi Telegram [tu_chat_id]" para recibir alertas.',
+          esBot: true,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Opcional: Si tienes la función a mano, la llamas aquí:
+        // await crearRecordatorio(userId, message, eventoId);
+      }
+
+      // ==========================================
+      // 2. DETECCIÓN DE PREGUNTAS PARA LA IA
+      // ==========================================
       const esPregunta = 
-        textoLower.includes('¿') || 
-        textoLower.includes('?') ||
-        textoLower.startsWith('/pregunta') ||
-        textoLower.startsWith('/bot') ||
-        textoLower.startsWith('/ia') ||
-        textoLower.includes('@bot') ||
-        textoLower.includes('hora') ||
-        textoLower.includes('cuando') ||
-        textoLower.includes('donde') ||
-        textoLower.includes('lugar') ||
-        textoLower.includes('fecha') ||
-        textoLower.includes('certificado') ||
-        textoLower.includes('requisitos') ||
-        textoLower.includes('costo') ||
+        textoLower.includes('¿') || textoLower.includes('?') ||
+        textoLower.startsWith('/pregunta') || textoLower.startsWith('/bot') ||
+        textoLower.startsWith('/ia') || textoLower.includes('@bot') ||
+        textoLower.includes('hora') || textoLower.includes('cuando') ||
+        textoLower.includes('donde') || textoLower.includes('lugar') ||
+        textoLower.includes('fecha') || textoLower.includes('certificado') ||
+        textoLower.includes('requisitos') || textoLower.includes('costo') ||
         textoLower.includes('inscripcion');
 
       if (esPregunta) {
-        console.log('🤖 [BOT] Detectada pregunta para IA:', message);
+        console.log('🤖 [BOT] Procesando pregunta para IA...');
         
         try {
           const pregunta = chatBotService.extraerPregunta(message);
           
-          // Avisar al frontend que el bot está "escribiendo"
           io.to(room).emit('bot_typing', { eventoId });
 
-          // Generar respuesta con Brain.js (instantáneo, sin delay)
-          const respuesta = await chatBotService.generarRespuesta(pregunta);
-          console.log('✅ [BOT] Respuesta generada:', respuesta.respuesta);
+          // ✨ AJUSTE DE ORO: Pasamos el eventoId para que la IA tenga contexto real de la BD
+          const respuesta = await chatBotService.generarRespuesta(pregunta, eventoId);
+          
+          console.log('✅ [BOT] Respuesta generada con confianza:', respuesta.confianza);
 
-          // Enviar la burbuja del bot al chat
           io.to(room).emit('receive_message', {
             userId: 0,
             userName: '🤖 Asistente IA',
             role: 'bot',
             message: respuesta.respuesta,
-            esBot: true, // ← ESTA BANDERA ES CLAVE PARA EL FRONTEND
+            esBot: true,
             timestamp: new Date().toISOString()
           });
 
-          // Guardar la interacción en la base de datos (en segundo plano, sin bloquear)
           const { getModels } = require('../models');
           const { ChatMensaje } = getModels();
           
           ChatMensaje.create({
             idevento: parseInt(eventoId),
-            idusuario: 0, // 0 representa al bot
+            idusuario: 0,
             username: 'Asistente IA',
             role: 'bot',
-            message: `[IA] P: ${pregunta} | R: ${respuesta.respuesta}`
+            message: respuesta.respuesta // Guardamos solo la respuesta limpia, se ve mejor en el historial
           }).catch(err => console.error('❌ [BOT] Error al guardar en BD:', err));
 
         } catch (error) {
           console.error('❌ [BOT] Error crítico:', error);
         }
-        
-        // No usamos 'return' aquí para que el mensaje del usuario TAMBIÉN se guarde y muestre en el chat
       }
 
-      // B. TU CÓDIGO ORIGINAL (INTACTO Y FUNCIONANDO PARA MENSAJES NORMALES)
+      // ==========================================
+      // 3. GUARDAR Y EMITIR EL MENSAJE DEL USUARIO (Tu código original intacto)
+      // ==========================================
       try {
         const { getModels } = require('../models');
         const { ChatMensaje } = getModels();
@@ -235,6 +247,7 @@ module.exports = (io) => {
           userName: userName || 'Usuario',
           role,
           message,
+          esBot: false,
           timestamp: new Date().toISOString()
         });
 
