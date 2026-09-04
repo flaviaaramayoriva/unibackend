@@ -508,21 +508,13 @@ async function generarPDFEvento(evento, usuario) {
     }
 
     // ===== 11. FIRMAS OFICIALES =====
-    asegurarPagina(120);
-    doc.moveDown(2);
-    const yF = doc.y;
-    doc.strokeColor('#000000');
-    doc.moveTo(80, yF + 40).lineTo(250, yF + 40).stroke();
-    doc.fontSize(9).fillColor('#333333').text('Firma del Responsable', 80, yF + 45, { width: 170, align: 'center' });
-    doc.moveTo(350, yF + 40).lineTo(520, yF + 40).stroke();
-    doc.text('Vo. Bo. DAF', 350, yF + 45, { width: 170, align: 'center' });
-
+   
     // ===== PIE DE PÁGINA =====
     const pages = doc.bufferedPageCount;
     for (let i = 0; i < pages; i++) {
       doc.switchToPage(i);
       doc.fontSize(8).fillColor('#999999')
-        .text(`Documento generado el ${new Date().toLocaleString('es-ES')} - UNIFRANZ`, 50, 780, { align: 'center', width: 500 });
+        .text(`Documento generado el ${new Date().toLocaleString('es-ES')} - FLA6346`, 50, 780, { align: 'center', width: 500 });
     }
 
     doc.end();
@@ -1449,11 +1441,13 @@ const getChatHistory = async (req, res) => {
 
 
 const enviarNotificacionTelegram = async (evento, tipo) => {
+  console.log(`🔔 [TELEGRAM] Intentando enviar notificación: ${tipo} para evento ID: ${evento.idevento || evento.id}`);
+  
   try {
     const models = getModels();
     const { Evento, User, Academico, Facultad } = models;
 
-    // Obtener evento completo con toda la información
+    // 1. Obtener evento completo
     const eventoCompleto = await Evento.findByPk(evento.idevento || evento.id, {
       include: [
         {
@@ -1475,23 +1469,31 @@ const enviarNotificacionTelegram = async (evento, tipo) => {
     });
 
     if (!eventoCompleto) {
-      console.log('⚠️ Evento no encontrado para notificar');
+      console.log('⚠️ [TELEGRAM] Evento no encontrado en la BD.');
       return;
     }
 
     const idAcademico = eventoCompleto.idacademico || eventoCompleto.academicoCreador?.idusuario;
+    console.log(`🔍 [TELEGRAM] ID Académico encontrado: ${idAcademico}`);
     
     if (!idAcademico) {
-      console.log('⚠️ No se encontró idacademico');
+      console.log('⚠️ [TELEGRAM] No se encontró idacademico en el evento.');
       return;
     }
 
     const usuarioCreador = eventoCompleto.academicoCreador || await User.findByPk(idAcademico);
 
-    if (!usuarioCreador || !usuarioCreador.telegram_chat_id) {
-      console.log(`⚠️ Usuario ${idAcademico} no tiene telegram_chat_id`);
+    if (!usuarioCreador) {
+      console.log(`⚠️ [TELEGRAM] Usuario creador no encontrado para ID: ${idAcademico}`);
       return;
     }
+
+    if (!usuarioCreador.telegram_chat_id) {
+      console.log(`⚠️ [TELEGRAM] El usuario ${usuarioCreador.email} NO tiene telegram_chat_id vinculado.`);
+      return;
+    }
+
+    console.log(`✅ [TELEGRAM] Usuario válido. Enviando a chat_id: ${usuarioCreador.telegram_chat_id}`);
 
     const chatId = usuarioCreador.telegram_chat_id;
     const fechaEvento = new Date(evento.fechaevento || eventoCompleto.fechaevento).toLocaleDateString('es-ES');
@@ -1500,75 +1502,26 @@ const enviarNotificacionTelegram = async (evento, tipo) => {
     let mensaje = '';
     
     if (tipo === 'aprobado') {
-      // Obtener resumen de eventos del usuario
-      const { activos, vencidos, total } = await getEventosAprobadosForBot(idAcademico, usuarioCreador.role);
-      const eventosPendientes = await getEventosNoAprobadosForBot(idAcademico, usuarioCreador.role);
-      
-      mensaje = 
-`✅ <b>¡EVENTO APROBADO!</b>
-
-📅 <b>${evento.nombreevento || eventoCompleto.nombreevento}</b>
-
-🗓️ Fecha: ${fechaEvento}
-${evento.horaevento || eventoCompleto.horaevento ? `🕐 Hora: ${evento.horaevento || eventoCompleto.horaevento}` : ''}
-📍 Lugar: ${evento.lugarevento || eventoCompleto.lugarevento}
-👤 Responsable: ${evento.responsable_evento || `${usuarioCreador.nombre} ${usuarioCreador.apellidopat || ''}`.trim()}
-🏫 Facultad: ${facultadNombre}
-
-━━━━━━━━━━━━━━━━━━━━
-📊 <b>Tu resumen actual:</b>
-✅ Aprobados: ${total} (${activos.length} activos, ${vencidos.length} pasados)
-⏳ Pendientes: ${eventosPendientes.length}
-
-¡Tu evento ha sido aprobado exitosamente! 🎉`;
-
+      mensaje = `✅ <b>¡EVENTO APROBADO!</b>\n\n📅 <b>${evento.nombreevento || eventoCompleto.nombreevento}</b>\n\n🗓️ Fecha: ${fechaEvento}\n📍 Lugar: ${evento.lugarevento || eventoCompleto.lugarevento}\n👤 Responsable: ${evento.responsable_evento || `${usuarioCreador.nombre} ${usuarioCreador.apellidopat || ''}`.trim()}\n🏫 Facultad: ${facultadNombre}\n\n¡Tu evento ha sido aprobado exitosamente! 🎉`;
     } else if (tipo === 'rechazado') {
-      const eventosRechazados = await getEventosRechazadosForBot(idAcademico, usuarioCreador.role);
-      
-      mensaje = 
-`❌ <b>EVENTO RECHAZADO</b>
-
-📅 <b>${evento.nombreevento || eventoCompleto.nombreevento}</b>
-
-🗓️ Fecha: ${fechaEvento}
-📍 Lugar: ${evento.lugarevento || eventoCompleto.lugarevento}
-👤 Responsable: ${evento.responsable_evento || `${usuarioCreador.nombre} ${usuarioCreador.apellidopat || ''}`.trim()}
-🏫 Facultad: ${facultadNombre}
-
-${evento.razon_rechazo ? `💬 <b>Motivo del rechazo:</b>\n${evento.razon_rechazo}` : ''}
-
-━━━━━━━━━━━━━━━━━━━━
-📊 <b>Total de eventos rechazados: ${eventosRechazados.length}</b>
-
-Revisa los motivos y realiza las correcciones necesarias.`;
-
+      mensaje = `❌ <b>EVENTO RECHAZADO</b>\n\n📅 <b>${evento.nombreevento || eventoCompleto.nombreevento}</b>\n\n🗓️ Fecha: ${fechaEvento}\n📍 Lugar: ${evento.lugarevento || eventoCompleto.lugarevento}\n\n💬 <b>Motivo:</b>\n${evento.razon_rechazo || 'Sin motivo especificado'}\n\nRevisa los motivos y realiza las correcciones necesarias.`;
     } else if (tipo === 'nuevo') {
-      mensaje = 
-`🆕 <b>NUEVO EVENTO REGISTRADO</b>
-
-📅 <b>${evento.nombreevento || eventoCompleto.nombreevento}</b>
-
-🗓️ Fecha: ${fechaEvento}
-${evento.horaevento || eventoCompleto.horaevento ? `🕐 Hora: ${evento.horaevento || eventoCompleto.horaevento}` : ''}
-📍 Lugar: ${evento.lugarevento || eventoCompleto.lugarevento}
-👤 Responsable: ${evento.responsable_evento || `${usuarioCreador.nombre} ${usuarioCreador.apellidopat || ''}`.trim()}
-🏫 Facultad: ${facultadNombre}
-
-⏳ Estado: Pendiente de aprobación
-
-Tu evento ha sido registrado y está siendo revisado por el administrador.`;
+      mensaje = `🆕 <b>NUEVO EVENTO REGISTRADO</b>\n\n📅 <b>${evento.nombreevento || eventoCompleto.nombreevento}</b>\n\n⏳ Estado: Pendiente de aprobación`;
     }
 
-    await axios.post(`${TELEGRAM_API}/sendMessage`, {
+    // Enviar a Telegram
+    const response = await axios.post(`${TELEGRAM_API}/sendMessage`, {
       chat_id: chatId,
       text: mensaje,
       parse_mode: 'HTML'
     });
 
-    console.log(`✅ Notificación Telegram enviada a ${chatId} (${tipo})`);
+    console.log(`✅ [TELEGRAM] Notificación enviada exitosamente. Status: ${response.status}`);
   } catch (error) {
-    console.error('❌ Error al enviar notificación Telegram:', error.message);
-    console.error('❌ Response:', error.response?.data);
+    console.error('❌ [TELEGRAM] Error CRÍTICO al enviar notificación:', error.message);
+    if (error.response) {
+      console.error('❌ [TELEGRAM] Respuesta de la API:', error.response.data);
+    }
   }
 };
 const enviarNotificacionCompletaTelegram = async (req, res) => {

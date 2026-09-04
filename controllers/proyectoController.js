@@ -3,7 +3,7 @@ const axios = require('axios');
 const { Op, QueryTypes } = require('sequelize');
 const asyncHandler = require('express-async-handler');
 const { sendNotification } = require('./notificationController.js');
-
+const { enviarNotificacionTelegram } = require('./botController'); 
 const OBJETIVO_TYPES = {
   modeloPedagogico: 1, posicionamiento: 2, internacionalizacion: 3,
   rsu: 4, fidelizacion: 5, otro: 6
@@ -283,6 +283,7 @@ const createEvento = async (req, res) => {
     }
 
     const eventoParaNotificar = {
+      idevento: nuevoEvento.idevento,
       nombreevento: nuevoEvento.nombreevento,
       fechaevento: nuevoEvento.fechaevento,
       horaevento: nuevoEvento.horaevento,
