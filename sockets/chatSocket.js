@@ -187,6 +187,7 @@ module.exports = (io) => {
         textoLower.includes('donde') || textoLower.includes('lugar') ||
         textoLower.includes('fecha') || textoLower.includes('certificado') ||
         textoLower.includes('requisitos') || textoLower.includes('costo') ||
+         textoLower.includes('recordatorio');
         textoLower.includes('inscripcion');
 
       if (esPregunta) {

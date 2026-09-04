@@ -34,6 +34,7 @@ class ChatBotService {
       { input: { adios: 1, bye: 1, chau: 1, hasta: 1 }, output: { adios: 1 } },
       { input: { miembros: 1, comite: 1, equipo: 1, organizadores: 1 }, output: { miembros: 1 } },
       { input: { estudiantes: 1, inscritos: 1, participantes: 1, cupos: 1 }, output: { estudiantes: 1 } },
+      { input: { recordatorio: 1, recordar: 1, avisar: 1, notificar: 1, alerta: 1 }, output: { recordatorio: 1 } },
     ];
 
     this.net = new brain.NeuralNetwork({ hiddenLayers: [5], activation: 'sigmoid' });
@@ -322,7 +323,23 @@ class ChatBotService {
                      `• 👥 *Miembros* - "¿Quiénes organizan?"\n` +
                      `• 📊 *Estadísticas* - "¿Cuántos inscritos?"\n\n` +
                      `¡Solo pregúntame!`;
+                     
           break;
+          case 'recordatorio':
+  respuesta = `⏰ **Sistema de Recordatorios**\n\n` +
+             `Puedo ayudarte a crear recordatorios de varias formas:\n\n` +
+             `📱 *Desde el chat:*\n` +
+             `Escribe: "recuérdame [fecha] [tarea]"\n` +
+             `Ejemplo: "recuérdame mañana revisar el evento"\n\n` +
+             `📲 *Por Telegram:*\n` +
+             `1. Vincula tu cuenta escribiendo: "vincular mi telegram [tu_chat_id]"\n` +
+             `2. Obtén tu chat_id enviando /start a @tu_bot\n` +
+             `3. Recibirás alertas automáticas\n\n` +
+             `🔔 *Recordatorios automáticos:*\n` +
+             `• 3 días antes del evento\n` +
+             `• El día del evento\n\n` +
+             `¿Quieres crear un recordatorio ahora?`;
+  break;
 
         default:
           // Búsqueda por palabras clave como fallback
