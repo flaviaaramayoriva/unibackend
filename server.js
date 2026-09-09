@@ -20,7 +20,7 @@ console.log('🔍 [DEBUG] PORT:', PORT);
 /*const FRONTEND_PATH = path.join(__dirname, '../public_html/frontendEvento.cidtec-uc.com');
 console.log('🔍 [DEBUG] FRONTEND_PATH:', FRONTEND_PATH);*/
 const fs = require('fs');
-const FRONTEND_PATH = process.env.API_BASE_URL || null;
+const FRONTEND_PATH = process.env.FRONTEND_STATIC_PATH || null;
 const frontendExists = FRONTEND_PATH ? fs.existsSync(FRONTEND_PATH) : false;
 console.log('🔍 [DEBUG] FRONTEND_PATH:', FRONTEND_PATH, '| Existe:', frontendExists);
 
