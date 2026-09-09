@@ -40,7 +40,7 @@ router.get('/comite', authorize(['admin', 'academico']), getComite);
 router.get('/email/:email', authorize(['admin']), getUserByEmail);
 router.get('/daf', authorize(['admin']), getUsersDaf);
 
-router.get('/', authorize(['admin']), getAllUsers);
+router.get('/', authorize(['admin', 'academico']), getAllUsers);
 router.post('/', authorize(['admin']), createUser);
 
 router.get('/:id', authorize(['admin','daf']), getUserById);
