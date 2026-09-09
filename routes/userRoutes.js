@@ -24,39 +24,27 @@ const {
 } = require('../controllers/userController.js');
 const router = express.Router();
 
-router.post('/users', createUser); 
-router.post('/link-telegram', linkTelegramAccount); // No protection needed if linking is public
-router.put('/unlink-telegram', unlinkTelegram); // No protection needed if unlinking is public
+// ── Rutas públicas (sin autenticación) ──
 router.get('/carreras', getCarrera); 
 router.get('/facultades', getFacultades);
-router.get('/users/me', protect, getUserMe);
+// Vincular Telegram se hace desde el bot tras iniciar sesión (público por diseño)
+router.post('/link-telegram', linkTelegramAccount);
 
-router.get('/comite',protect,authorize(['admin', 'academico']), getComite);
-router.get('/users/comite', protect, authorize(['admin', 'academico']), getComiteUser);
-//router.get('/notificaciones',protect,authorize(['admin', 'academico']), getAllUsers);
-
-router.get('/users', protect, authorize(['admin']), getAllUsers);
-router.get('/users/daf', protect, authorize(['admin']), getUsersDaf);
-router.get('/',getAllUsers);
-
-router.get('/:id', protect,authorize(['admin','daf']), getUserById);
-router.get('/email/:email', getUserByEmail);
-//router.put('/users/', protect, authorize(['admin']), updateUserRole);
-
-//router.put('/:id',protect, authorize(['admin']), updateUser);
-router.put('/:id',protect, updateUserDaf);
-router.delete('/users/:id', protect, authorize(['admin']), deleteUserByAdmin);
-//router.get('/users/:id',protect,getUserById);
-
+// ── Rutas protegidas (requieren token) ──
 router.use(protect);
 
-/*router.route('/')
-  .get(authorize(['admin', 'academico']), getAllUsers) // Allow 'admin' AND 'academico' to get all users
-  .post(authorize(['admin']), createUser); // Only 'admin' can create users
+router.get('/me', getUserMe);
+router.put('/unlink-telegram', unlinkTelegram);
 
-router.route('/:id')
-  .get(authorize(['admin', 'academico']), getUserById) // Allow 'admin' AND 'academico' to get a user by ID
-  .delete(authorize(['admin']), deleteUserByAdmin); // Only 'admin' can delete users
-*/
-//router. get('/evento', protectU, authorizeU(['academico','admin']),createEvent)
+router.get('/comite', authorize(['admin', 'academico']), getComite);
+router.get('/email/:email', authorize(['admin']), getUserByEmail);
+router.get('/daf', authorize(['admin']), getUsersDaf);
+
+router.get('/', authorize(['admin']), getAllUsers);
+router.post('/', authorize(['admin']), createUser);
+
+router.get('/:id', authorize(['admin','daf']), getUserById);
+router.put('/:id', protect, updateUserDaf);
+router.delete('/:id', authorize(['admin']), deleteUserByAdmin);
+
 module.exports = router;

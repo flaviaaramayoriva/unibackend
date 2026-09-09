@@ -37,7 +37,11 @@ const protect = async (req, res, next) => {
     const models = getModels();
     const User = models.User;
 
-    const user = await User.findByPk(decoded.idusuario, { raw: true });
+    // 🔐 Seguridad: excluir el hash de la contraseña de la respuesta / datos del usuario
+    const user = await User.findByPk(decoded.idusuario, {
+      raw: true,
+      attributes: { exclude: ['contrasenia'] }
+    });
     
     if (!user) {
       return res.status(401).json({ error: 'Usuario no encontrado' });
@@ -52,9 +56,6 @@ const protect = async (req, res, next) => {
     if (!estaHabilitado) {
       return res.status(401).json({ error: 'Usuario deshabilitado' });
     }
-
-    console.log('PROTECT - user.role:', user.role);
-    console.log('PROTECT - habilitado:', user.habilitado);
 
     req.user = user; 
     next();
@@ -71,12 +72,26 @@ const protect = async (req, res, next) => {
   }
 };
 const protect1 = asyncHandler(async (req, res, next) => {
-  // ... código existente de extracción de token ...
+  let token;
 
   try {
-    // ... código existente de verificación de token y búsqueda de usuario ...
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      token = req.headers.authorization.split(' ')[1];
+    }
 
-    const user = await User.findByPk(userId, { raw: true });
+    if (!token) {
+      return res.status(401).json({ error: 'Token de autorización requerido', code: 'NO_TOKEN' });
+    }
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const models = getModels();
+    const User = models.User;
+
+    // 🔐 Seguridad: excluir el hash de la contraseña de la respuesta / datos del usuario
+    const user = await User.findByPk(decoded.idusuario, {
+      raw: true,
+      attributes: { exclude: ['contrasenia'] }
+    });
 
     if (!user) {
       return res.status(401).json({ error: 'Usuario no encontrado', code: 'USER_NOT_FOUND' });
@@ -95,7 +110,13 @@ const protect1 = asyncHandler(async (req, res, next) => {
     req.user = user;
     next();
   } catch (error) {
-    // ... manejo de errores existente ...
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ error: 'Token inválido', code: 'INVALID_TOKEN' });
+    }
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expirado', code: 'TOKEN_EXPIRED' });
+    }
+    return res.status(401).json({ error: 'Error de autenticación', code: 'AUTH_ERROR' });
   }
 });
 const authorize = (roles = []) => {

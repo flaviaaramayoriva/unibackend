@@ -34,6 +34,13 @@ const registerUser = async (req, res) => {
 
   const username = req.body.username || req.body.userName;
   try {
+    // 🔐 Seguridad: solo permitir roles asignables en registro público.
+    // Nunca aceptar 'admin'/'daf' directamente desde el body.
+    const ROLES_PERMITIDOS = ['student', 'academico'];
+    if (role && !ROLES_PERMITIDOS.includes(role)) {
+      return res.status(400).json({ message: `Rol '${role}' no permitido en el registro.` });
+    }
+
     if (!username || !contrasenia || !email) {
       return res.status(400).json({ message: 'Por favor, proporciona nombre de usuario, contraseña y correo electrónico.' });
     }

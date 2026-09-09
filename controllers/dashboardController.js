@@ -216,7 +216,8 @@ const getMyDashboardStats = asyncHandler(async (req, res) => {
 
     const { Evento, Academico } = models;
 
-    const isAdminOrSistemas = role === 'admin' || email === 'sistemas@gmail.com';
+    // 🔐 Seguridad: eliminar backdoor hardcodeado. Solo admin tiene acceso.
+    const isAdminOrSistemas = role === 'admin';
     
     if (isAdminOrSistemas) {
       const [totalEvents, eventosPorEstado] = await Promise.all([

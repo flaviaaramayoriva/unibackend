@@ -1,12 +1,84 @@
 // 1. Agregamos el servicio del bot al inicio del archivo
 const chatBotService = require('../services/chatBotService');
 
+const notificarSala = async (io, { roomId, userId, userName, role, message, timestamp }) => {
+  try {
+    if (String(roomId) === 'general') return; // Sin avisos en el chat general
+
+    const senderId = parseInt(userId);
+    if (isNaN(senderId)) return;
+
+    const destinatarios = [];
+    let roomName = null;
+
+    const { getModels } = require('../models');
+    const { Comite, Evento, User } = getModels();
+
+    if (String(roomId).startsWith('private_')) {
+      const ids = String(roomId).replace('private_', '').split('_').map(Number).filter(n => !isNaN(n));
+      const otroId = ids.find(n => n !== senderId);
+      if (otroId == null) return;
+
+      const otro = await User.findOne({
+        where: { idusuario: otroId },
+        attributes: ['nombre', 'apellidopat']
+      });
+      roomName = otro ? `${otro.nombre || ''} ${otro.apellidopat || ''}`.trim() || null : null;
+      destinatarios.push('usuario_' + String(otroId));
+    } else {
+      const id = parseInt(roomId);
+      if (isNaN(id)) return;
+
+      const evento = await Evento.findOne({
+        where: { idevento: id },
+        attributes: ['nombreevento', 'idacademico']
+      });
+      roomName = evento?.nombreevento || null;
+
+      const comite = await Comite.findAll({ where: { idevento: id }, attributes: ['idusuario'] });
+      comite.forEach(c => destinatarios.push('usuario_' + String(c.idusuario)));
+
+      if (evento && parseInt(evento.idacademico)) {
+        destinatarios.push('usuario_' + String(evento.idacademico));
+      }
+    }
+
+    const unicos = [...new Set(destinatarios)].filter(u => u !== 'usuario_' + String(senderId));
+
+    const payload = {
+      type: String(roomId).startsWith('private_') ? 'private' : 'evento',
+      roomId: String(roomId),
+      roomName,
+      userId: senderId,
+      userName: userName || 'Usuario',
+      role,
+      message,
+      timestamp: timestamp || new Date().toISOString()
+    };
+
+    unicos.forEach(canal => io.to(canal).emit('chat_notification', payload));
+  } catch (e) {
+    console.warn('❌ [NOTIF] Error al notificar:', e.message);
+  }
+};
+
 module.exports = (io) => {
   const eventUsers = new Map();
   const privateRooms = new Map(); // Track private room members
 
   io.on('connection', (socket) => {
     console.log('🔌 Usuario conectado:', socket.id);
+
+    socket.on('connect', () => {
+      socket.emit('personal_channel', { channel: 'usuario_' + String(socket.data?.userId || '') });
+    });
+
+    socket.on('register_user', ({ userId }) => {
+      const canal = 'usuario_' + String(userId);
+      socket.join(canal);
+      socket.data = { ...socket.data, userId };
+      console.log(`🎯 [NOTIF] ${userId || '?'} registrado en canal ${canal}`);
+    });
 
     socket.on('join_private', async ({ roomId, userId, userName }) => {
       console.log('🔒 [PRIVADO] Unirse a sala:', { roomId, userId, userName });
@@ -68,6 +140,7 @@ module.exports = (io) => {
           timestamp: new Date().toISOString()
         });
 
+        notificarSala(io, { roomId, userId, userName, role, message });
         console.log(`✅ [PRIVADO] Mensaje emitido a sala ${roomId}`);
       } catch (e) {
         console.error('❌ [PRIVADO] Error:', e.message);
@@ -126,8 +199,12 @@ module.exports = (io) => {
         const userList = Array.from(eventUsers.get(eventoId).values());
         io.to(room).emit('user_list', userList);
 
+        const whereHistorial = eventoId === 'general'
+          ? { idevento: 0, room_id: 'general' }
+          : { idevento: parseInt(eventoId) };
+
         const historial = await ChatMensaje.findAll({
-          where: { idevento: parseInt(eventoId) },
+          where: whereHistorial,
           order: [['createdAt', 'ASC']],
           limit: 50
         });
@@ -187,8 +264,7 @@ module.exports = (io) => {
         textoLower.includes('donde') || textoLower.includes('lugar') ||
         textoLower.includes('fecha') || textoLower.includes('certificado') ||
         textoLower.includes('requisitos') || textoLower.includes('costo') ||
-         textoLower.includes('recordatorio');
-        textoLower.includes('inscripcion');
+        textoLower.includes('recordatorio') || textoLower.includes('inscripc');
 
       if (esPregunta) {
         console.log('🤖 [BOT] Procesando pregunta para IA...');
@@ -216,11 +292,12 @@ module.exports = (io) => {
           const { ChatMensaje } = getModels();
           
           ChatMensaje.create({
-            idevento: parseInt(eventoId),
+            idevento: eventoId === 'general' ? 0 : parseInt(eventoId),
             idusuario: 0,
             username: 'Asistente IA',
             role: 'bot',
-            message: respuesta.respuesta // Guardamos solo la respuesta limpia, se ve mejor en el historial
+            message: respuesta.respuesta,
+            ...(eventoId === 'general' ? { room_id: 'general' } : {})
           }).catch(err => console.error('❌ [BOT] Error al guardar en BD:', err));
 
         } catch (error) {
@@ -236,11 +313,12 @@ module.exports = (io) => {
         const { ChatMensaje } = getModels();
         
         await ChatMensaje.create({
-          idevento: parseInt(eventoId),
+          idevento: eventoId === 'general' ? 0 : parseInt(eventoId),
           idusuario: parseInt(userId),
           username: userName || null,
           role,
-          message
+          message,
+          ...(eventoId === 'general' ? { room_id: 'general' } : {})
         });
 
         io.to(room).emit('receive_message', {
@@ -252,6 +330,7 @@ module.exports = (io) => {
           timestamp: new Date().toISOString()
         });
 
+        notificarSala(io, { roomId: eventoId, userId, userName, role, message });
         console.log(`✅ [EVENTO] Mensaje emitido a: ${room}`);
       } catch (e) {
         console.error('❌ [EVENTO] Error:', e.message);

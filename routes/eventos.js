@@ -43,15 +43,15 @@ router.get('/rechazados',protect, getEventosRechazados);
 
 //router.get('/listar-pendientes', pendientes); // si necesitas esta ruta
 //router.get('/pendientes',protect, getEventosPendientesPorArea);
-router.put('/:id/approve', aprobarEvento);
-router.put('/:id/reject',deleteEvento);
-router.put('/:id', updateEvento);
-router.put('/:id/cancel',rechazarEvento);
-//router.delete('/:id', deleteEvento);
-router.post('/',protect, createEvento);
+router.put('/:id/approve', protect, aprobarEvento);
+router.put('/:id/reject', protect, rechazarEvento);
+router.put('/:id', protect, updateEvento);
+router.put('/:id/cancel', protect, rechazarEvento);
+//router.delete('/:id', protect, deleteEvento);
+router.post('/', protect, createEvento);
 router.get('/con-facultad', getEventos);
-router.get('/', getAllEventos);
-router.get('/:id',protect, getEventoById);
+router.get('/', protect, getAllEventos);
+router.get('/:id', protect, getEventoById);
 
 router.get('/:id/informe', protect, getInformeEvento);
 router.post('/:id/informe', protect, guardarInformeEvento);

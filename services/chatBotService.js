@@ -15,8 +15,6 @@ class ChatBotService {
 
   entrenar() {
     const trainingData = [
-      // ✅ FIX: se agregan variantes cortas de saludo (hi, ey) para que
-      // el vocabulario de la red las reconozca como parte de "saludo"
       { input: { hola: 1, buen: 1, hey: 1, hi: 1, ey: 1, buenas: 1 }, output: { saludo: 1 } },
       { input: { hora: 1, cuando: 1, tiempo: 1, horario: 1 }, output: { hora: 1 } },
       { input: { lugar: 1, donde: 1, ubicacion: 1, sitio: 1 }, output: { lugar: 1 } },
@@ -46,7 +44,6 @@ class ChatBotService {
   }
 
   async getEventoInfo(eventoId) {
-    // Usar caché por 5 minutos para no saturar la BD
     if (this.eventoCache && this.cacheTime && (Date.now() - this.cacheTime < 300000)) {
       return this.eventoCache;
     }

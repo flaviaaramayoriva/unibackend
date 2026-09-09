@@ -28,6 +28,7 @@ console.log('🔍 [DEBUG] FRONTEND_PATH:', FRONTEND_PATH, '| Existe:', frontendE
   'https://unibackend-production-a0f8.up.railway.app',
   'https://unifrontend-production-df6e.up.railway.app',
   'http://localhost:3000',
+  'http://localhost:8080',
   'http://localhost:8081',
   'http://localhost:19006'
 ];
