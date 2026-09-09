@@ -98,24 +98,29 @@ const startTelegramBot = async () => {
   // Si ya existe una instancia, no crear otra
   if (_botInstance) {
     console.warn('⚠️ Bot ya iniciado, ignorando segunda llamada.');
-    return;
+    return _botInstance;
   }
 
   const bot = new TelegramBot(TELEGRAM_TOKEN, {
-    webhookOptions: {
-      webhookUrl: `${API_BASE_URL}/webhook/${TELEGRAM_TOKEN}`
-    }
+    webhook: true,
+    polling: false, 
   });
 
-  // ✅ Eliminar webhook previo para evitar conflictos
-  await deleteWebhookFirst(TELEGRAM_TOKEN);
-  
-  // Establecer el nuevo webhook
-  await bot.setWebhook(`${API_BASE_URL}/webhook/${TELEGRAM_TOKEN}`);
-  
-  _botInstance = bot;
-  console.log('🤖 Bot de Telegram iniciado con webhooks...');
+  try {
+    // ✅ 2. LIMPIEZA NATIVA: Elimina webhook anterior y descarta mensajes en cola
+    await bot.deleteWebhook({ drop_pending_updates: true });
+    console.log('🧹 Webhook anterior eliminado y cola limpiada.');
 
+    // ✅ 3. Establecer el nuevo webhook
+    await bot.setWebhook(`${API_BASE_URL}/webhook/${TELEGRAM_TOKEN}`);
+    console.log(`🔗 Webhook establecido en: ${API_BASE_URL}/webhook/...`);
+    
+    _botInstance = bot;
+    console.log('🤖 Bot de Telegram iniciado exitosamente en modo WEBHOOK.');
+  } catch (error) {
+    console.error('❌ Error al configurar el webhook de Telegram:', error.message);
+    return;
+  }
   // ── /start ──
   bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
