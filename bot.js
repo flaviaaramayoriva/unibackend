@@ -101,22 +101,20 @@ const startTelegramBot = async () => {
     return;
   }
 
-  // ✅ Eliminar webhook y updates pendientes ANTES de iniciar polling
-  await deleteWebhookFirst(TELEGRAM_TOKEN);
-  
-  // Esperar 2 segundos para que Telegram libere el polling anterior
-  await new Promise(r => setTimeout(r, 2000));
-
   const bot = new TelegramBot(TELEGRAM_TOKEN, {
-    polling: {
-      interval: 1000,
-      autoStart: true,
-      params: { timeout: 10 }
+    webhookOptions: {
+      webhookUrl: `${API_BASE_URL}/webhook/${TELEGRAM_TOKEN}`
     }
   });
 
+  // ✅ Eliminar webhook previo para evitar conflictos
+  await deleteWebhookFirst(TELEGRAM_TOKEN);
+  
+  // Establecer el nuevo webhook
+  await bot.setWebhook(`${API_BASE_URL}/webhook/${TELEGRAM_TOKEN}`);
+  
   _botInstance = bot;
-  console.log('🤖 Bot de Telegram iniciado...');
+  console.log('🤖 Bot de Telegram iniciado con webhooks...');
 
   // ── /start ──
   bot.onText(/\/start/, (msg) => {
