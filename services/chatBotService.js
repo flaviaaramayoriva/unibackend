@@ -49,12 +49,12 @@ class ChatBotService {
       { input: { pendiente: 1, pendientes: 1, esperando: 1, aprobacion: 1, revisar: 1 }, output: { pendientes: 1 } },
       { input: { cercanos: 1, proximos: 1, semana: 1, proxima: 1 }, output: { eventos_cercanos: 1 } },
       // ── NUEVAS: Reports ──
-      { input: { reporte: 1, report: 1, resumen evento: 1, informe: 1, estadistica: 1 }, output: { reporte_evento: 1 } },
+      { input: { reporte: 1, report: 1, informe: 1, estadistica: 1 }, output: { reporte_evento: 1 } },
       { input: { cerrado: 1, finalizado: 1, terminado: 1, pasado: 1, anterior: 1, completado: 1 }, output: { evento_cerrado: 1 } },
       // ── NUEVAS: Notifications ──
       { input: { telegram: 1, enviar: 1, mandar: 1, notify: 1 }, output: { enviar_telegram: 1 } },
       { input: { comparar: 1, diferencia: 1, versus: 1, vs: 1, comparacion: 1 }, output: { comparar: 1 } },
-      { input: { sugerencia: 1, sugerir: 1, recomendar: 1, consejo: 1, que hago: 1, que deberia: 1 }, output: { sugerencia: 1 } },
+      { input: { sugerencia: 1, sugerir: 1, recomendar: 1, consejo: 1 }, output: { sugerencia: 1 } },
     ];
 
     this.net = new brain.NeuralNetwork({ hiddenLayers: [5], activation: 'sigmoid' });
