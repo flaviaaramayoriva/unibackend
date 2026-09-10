@@ -933,7 +933,10 @@ Hola <b>${usuario.nombre} ${usuario.apellidopat || ''}</b>, ahora recibirás not
     // ============================================
     // 📋 COMANDOS
     // ============================================
-    if (text === '/start') {
+    // Normalizar comando: minúsculas y sin @botusername (Telegram a veces lo anexa)
+    const comando = text.toLowerCase().trim().replace(/^(\/\w+)@\w+/g, '$1');
+
+    if (comando === '/start') {
       const welcomeMessage = 
 `🤖 <b>¡Bienvenido al Bot de Eventos UNIFRANZ!</b>
 
@@ -968,7 +971,7 @@ También puedes escribirme en lenguaje natural:
       return res.status(200).send('OK');
     }
 
-    if (text === '/estado') {
+    if (comando === '/estado') {
       const models = getModels();
       const { User } = models;
 
@@ -992,7 +995,7 @@ También puedes escribirme en lenguaje natural:
       return res.status(200).send('OK');
     }
 
-    if (text === '/mis_eventos') {
+    if (comando === '/mis_eventos') {
       const models = getModels();
       const { User } = models;
 
@@ -1046,7 +1049,7 @@ También puedes escribirme en lenguaje natural:
       return res.status(200).send('OK');
     }
 
-    if (text === '/pendientes') {
+    if (comando === '/pendientes') {
       const models = getModels();
       const { User } = models;
 
@@ -1089,7 +1092,7 @@ También puedes escribirme en lenguaje natural:
       return res.status(200).send('OK');
     }
 
-    if (text === '/rechazados') {
+    if (comando === '/rechazados') {
       const models = getModels();
       const { User } = models;
 
@@ -1132,7 +1135,7 @@ También puedes escribirme en lenguaje natural:
       return res.status(200).send('OK');
     }
 
-    if (text === '/comite') {
+    if (comando === '/comite') {
       const models = getModels();
       const { User } = models;
 
@@ -1195,7 +1198,7 @@ También puedes escribirme en lenguaje natural:
       return res.status(200).send('OK');
     }
 
-    if (text === '/resumen') {
+    if (comando === '/resumen') {
       const models = getModels();
       const { User } = models;
 
@@ -1255,7 +1258,7 @@ Usa /mis_eventos, /pendientes, /rechazados o /comite para ver detalles.`;
       return res.status(200).send('OK');
     }
 
-    if (text === '/ayuda') {
+    if (comando === '/ayuda') {
       const helpMessage = 
 `📚 <b>Comandos disponibles:</b>
 
@@ -1295,7 +1298,7 @@ Usa /mis_eventos, /pendientes, /rechazados o /comite para ver detalles.`;
     }
 
     // 📄 SELECCIONAR EVENTO PARA PDF (con botones)
-    if (text === '/ficha_pdf') {
+    if (comando === '/ficha_pdf') {
       const models = getModels();
       const { User, Evento } = models;
 
@@ -1351,7 +1354,7 @@ Usa /mis_eventos, /pendientes, /rechazados o /comite para ver detalles.`;
       return res.status(200).send('OK');
     }
 
-    if (text === '/desvincular') {
+    if (comando === '/desvincular') {
       const models = getModels();
       const { User } = models;
 
