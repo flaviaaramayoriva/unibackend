@@ -420,6 +420,68 @@ class ChatBotService {
   }
 
   // ─── Main: generar respuesta ──────────────────────────────────────────────
+  // ─── Clasificador por palabras clave (determinístico, confiable) ─────────
+  _detectarCategoria(palabras) {
+    const limp = (p) => p.replace(/[.,!?;:]/g, '').toLowerCase();
+
+    const keywords = {
+      saludo: ['hola', 'buen', 'hey', 'hi', 'ey', 'buenas', 'saludos'],
+      hora: ['hora', 'horario', 'asi', 'que hora', 'a que hora'],
+      lugar: ['lugar', 'donde', 'ubicacion', 'sitio', 'direccion', 'aula', 'salon'],
+      fecha: ['fecha', 'dia', 'cuando', 'que dia'],
+      certificado: ['certificado', 'diploma', 'constancia', 'horas de capacitacion'],
+      costo: ['costo', 'precio', 'pagar', 'gratis', 'gratuito', 'cuanto cuesta', 'vale'],
+      inscripcion: ['inscripcion', 'inscribir', 'registrar', 'apuntarme', 'cupo', 'registrarme'],
+      requisitos: ['requisitos', 'necesito', 'traer', 'llevar', 'requisito'],
+      contacto: ['contacto', 'organizador', 'responsable', 'email', 'correo', 'contactar'],
+      programa: ['programa', 'agenda', 'actividades', 'cronograma', 'horarios del evento'],
+      material: ['material', 'laptop', 'cuaderno', 'computadora', 'llevar'],
+      expositor: ['expositor', 'ponente', 'speaker', 'conferencista', 'quien dicta', 'quien da'],
+      tema: ['tema', 'contenido', 'trata', 'enseñaran', 'sobre que'],
+      ayuda: ['ayuda', 'help', 'opciones', 'que puedes', 'funciones', 'que puedo'],
+      gracias: ['gracias', 'thanks', 'thank'],
+      adios: ['adios', 'bye', 'chau', 'hasta luego'],
+      miembros: ['miembros', 'comite', 'equipo', 'organizadores'],
+      estudiantes: ['estudiantes', 'inscritos', 'participantes', 'cuantos'],
+      recordatorio: ['recordatorio', 'recordar', 'avisar', 'notificar', 'alerta'],
+      objetivos: ['objetivos', 'meta', 'proposito', 'finalidad'],
+      tipo: ['tipo', 'clase', 'categoria', 'modalidad'],
+      publico: ['publico', 'audiencia', 'dirigido', 'participar', 'quienes pueden'],
+      facultad: ['facultad', 'carrera', 'departamento', 'escuela'],
+      fase: ['fase', 'etapa', 'progreso'],
+      // QUICK ACTIONS
+      resumen_dia: ['resumen', 'dia', 'hoy', 'recap'],
+      pendientes: ['pendiente', 'pendientes', 'esperando', 'revisar', 'aprobacion'],
+      eventos_cercanos: ['cercano', 'cercanos', 'proximos', 'proxima', 'semana'],
+      // REPORTS
+      reporte_evento: ['reporte', 'report', 'informe', 'estadistica'],
+      evento_cerrado: ['cerrado', 'finalizado', 'terminado', 'pasado', 'completado', 'anterior'],
+      // TELEGRAM
+      enviar_telegram: ['telegram', 'enviar', 'mandar', 'enviame'],
+      // SUGERENCIAS
+      sugerencia: ['sugerencia', 'sugerir', 'recomendar', 'consejo', 'deberia', 'que hago'],
+    };
+
+    let mejorCategoria = null;
+    let mejorPuntaje = 0;
+
+    for (const [categoria, claves] of Object.entries(keywords)) {
+      let puntaje = 0;
+      palabras.forEach(p => {
+        const limpia = limp(p);
+        if (claves.includes(limpia)) puntaje++;
+        // Coincidencia parcial (ej: "pendientes?" → "pendiente")
+        else if (claves.some(c => c.length >= 4 && limpia.includes(c))) puntaje++;
+      });
+      if (puntaje > mejorPuntaje) {
+        mejorPuntaje = puntaje;
+        mejorCategoria = categoria;
+      }
+    }
+
+    return mejorCategoria && mejorPuntaje > 0 ? mejorCategoria : null;
+  }
+
   async generarRespuesta(pregunta, eventoId = null, userId = null) {
     try {
       const preguntaLower = pregunta.toLowerCase();
@@ -431,30 +493,38 @@ class ChatBotService {
       const userInfo = (userId && userId !== 'null' && userId !== 'undefined')
         ? await this.getUserInfo(userId) : null;
 
+      // 1️⃣ Primero el clasificador por palabras clave (determinístico)
+      const categoriaKeyword = this._detectarCategoria(palabras);
+
+      // 2️⃣ La red neuronal como respaldo (encode words as input)
       const input = {};
       palabras.forEach(p => {
         const limpia = p.replace(/[.,!?;:]/g, '');
         if (limpia.length >= 2) input[limpia] = 1;
       });
-
       const output = this.net.run(input);
 
-      let mejorCategoria = null;
+      let categoriaNN = null;
       let mejorProbabilidad = 0;
       for (const [categoria, probabilidad] of Object.entries(output)) {
-        if (probabilidad > mejorProbabilidad && probabilidad > 0.3) {
+        if (probabilidad > mejorProbabilidad && probabilidad > 0.25) {
           mejorProbabilidad = probabilidad;
-          mejorCategoria = categoria;
+          categoriaNN = categoria;
         }
       }
+
+      // 3️⃣ Prioridad: keyword > NN
+      const mejorCategoria = categoriaKeyword || categoriaNN;
 
       const respuesta = await this._generarPorCategoria(mejorCategoria, eventoInfo, userInfo, palabras, userId);
 
       return {
         success: true,
         respuesta,
-        modelo: 'Brain.js Neural Network + DB v4',
-        confianza: (mejorProbabilidad * 100).toFixed(0) + '%',
+        modelo: 'Keywords + Brain.js + DB v5',
+        confianza: categoriaKeyword
+          ? 'Alta (keywords)'
+          : (mejorProbabilidad * 100).toFixed(0) + '%',
         categoria: mejorCategoria || 'default',
       };
     } catch (error) {
