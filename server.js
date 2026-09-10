@@ -10,7 +10,11 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const PORT = process.env.PORT || 3001;
 const {iniciarRecordatorios} = require('./services/recordatorios.js');
 const { iniciarCronJobs } = require('./utils/cronJobs.js');
-require('./config/bot.js');
+// DESACTIVADO: config/bot.js inicia un bot con polling:true que causa
+// ETELEGRAM 409 "terminated by other getUpdates request" cuando Railway
+// corre más de una instancia. El envío de notificaciones usa el botController
+// (axios directo a la API de Telegram), así que este require no es necesario.
+// require('./config/bot.js');
 
 console.log('🔍 [DEBUG] DB_USER:', process.env.DB_USER ? '***' : 'undefined');
 console.log('🔍 [DEBUG] DB_HOST:', process.env.DB_HOST);
