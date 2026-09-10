@@ -5,6 +5,7 @@ const axios = require('axios');
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}`;
 const CACHE_TTL = 300000;
+const USER_CACHE_TTL = 15000;
 
 class ChatBotService {
   constructor() {
@@ -166,7 +167,7 @@ class ChatBotService {
     if (isNaN(id) || id <= 0) return null;
 
     const cached = this.userCache.get(String(id));
-    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) return cached.data;
+    if (cached && (Date.now() - cached.timestamp < USER_CACHE_TTL)) return cached.data;
 
     const rows = await this.safeQuery('user_main', `
       SELECT idusuario, nombre, apellidopat, apellidomat, email, role, telegram_chat_id
