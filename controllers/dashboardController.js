@@ -412,7 +412,7 @@ const getMyCommitteeEvents = asyncHandler(async (req, res) => {
 
     // 3. Obtener los miembros del comité de esos eventos
     const [filasComite] = await sequelize.query(
-      `SELECT c.idevento, u.idusuario, u.nombre, u.apellidopat, u.apellidomat, c.rol_comite
+      `SELECT c.idevento, u.idusuario, u.nombre, u.apellidopat, u.apellidomat
        FROM comite c
        JOIN usuario u ON u.idusuario = c.idusuario
        WHERE c.idevento IN (:ids)`,
@@ -426,7 +426,7 @@ const getMyCommitteeEvents = asyncHandler(async (req, res) => {
         nombre: f.nombre,
         apellidopat: f.apellidopat,
         apellidomat: f.apellidomat,
-        rol_comite: f.rol_comite
+        rol_comite: 'miembro'
       });
     });
 

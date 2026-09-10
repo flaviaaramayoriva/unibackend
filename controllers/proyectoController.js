@@ -1608,7 +1608,7 @@ const getEventosAprobadosPorFacultad = asyncHandler(async (req, res) => {
     if (idsEventos.length > 0) {
       try {
         const [filasComite] = await sequelize.query(
-          `SELECT c.idevento, u.idusuario, u.nombre, u.apellidopat, u.apellidomat, c.rol_comite
+          `SELECT c.idevento, u.idusuario, u.nombre, u.apellidopat, u.apellidomat
            FROM comite c
            JOIN usuario u ON u.idusuario = c.idusuario
            WHERE c.idevento IN (:ids)`,
@@ -1620,7 +1620,7 @@ const getEventosAprobadosPorFacultad = asyncHandler(async (req, res) => {
             nombre: f.nombre,
             apellidopat: f.apellidopat,
             apellidomat: f.apellidomat,
-            rol_comite: f.rol_comite
+            rol_comite: 'miembro'
           });
         });
       } catch (e) {
