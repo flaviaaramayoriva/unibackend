@@ -410,7 +410,27 @@ const getMyCommitteeEvents = asyncHandler(async (req, res) => {
       order: [['fechaevento', 'ASC'], ['horaevento', 'ASC']]
     });
 
-    // 3. Formatear la respuesta para que coincida con lo que espera el frontend
+    // 3. Obtener los miembros del comité de esos eventos
+    const [filasComite] = await sequelize.query(
+      `SELECT c.idevento, u.idusuario, u.nombre, u.apellidopat, u.apellidomat, c.rol_comite
+       FROM comite c
+       JOIN usuario u ON u.idusuario = c.idusuario
+       WHERE c.idevento IN (:ids)`,
+      { replacements: { ids: idsEventosComite }, type: QueryTypes.SELECT }
+    );
+
+    const comitePorEvento = {};
+    filasComite.forEach(f => {
+      (comitePorEvento[f.idevento] = comitePorEvento[f.idevento] || []).push({
+        idusuario: f.idusuario,
+        nombre: f.nombre,
+        apellidopat: f.apellidopat,
+        apellidomat: f.apellidomat,
+        rol_comite: f.rol_comite
+      });
+    });
+
+    // 4. Formatear la respuesta para que coincida con lo que espera el frontend
     const eventosFormateados = eventos.map(event => {
       const creador = event.academicoCreador;
       const facultadNombre = creador?.academico?.facultad?.nombre_facultad || 'Sin facultad';
@@ -424,6 +444,7 @@ const getMyCommitteeEvents = asyncHandler(async (req, res) => {
         lugarevento: event.lugarevento || 'Sin ubicación',
         estado: event.estado,
         idacademico: event.idacademico,
+        Comite: comitePorEvento[event.idevento] || [],
         academico: creador ? {
           id: creador.idusuario,
           nombre: `${creador.nombre || ''} ${creador.apellidopat || ''}`.trim()
