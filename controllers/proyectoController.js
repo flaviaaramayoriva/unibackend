@@ -1610,6 +1610,7 @@ const getEventosAprobadosPorFacultad = asyncHandler(async (req, res) => {
     // ✅ CAMPOS EXISTENTES
     id: event.idevento,
     idevento: event.idevento,  // ← AGREGAR (por compatibilidad)
+    idacademico: event.idacademico,
     title: event.nombreevento || 'Sin título',
     nombreevento: event.nombreevento,  // ← AGREGAR
     description: event.descripcion || 'Sin descripción',
