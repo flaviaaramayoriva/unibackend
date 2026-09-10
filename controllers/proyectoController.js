@@ -1602,6 +1602,32 @@ const getEventosAprobadosPorFacultad = asyncHandler(async (req, res) => {
 
     console.log(`✅ Eventos encontrados para ${userRole}:`, eventosUnicos.length);
 
+    const sequelize = getModels().sequelize;
+    const idsEventos = eventosUnicos.map(e => e.idevento);
+    let comitePorEvento = {};
+    if (idsEventos.length > 0) {
+      try {
+        const [filasComite] = await sequelize.query(
+          `SELECT c.idevento, u.idusuario, u.nombre, u.apellidopat, u.apellidomat, c.rol_comite
+           FROM comite c
+           JOIN usuario u ON u.idusuario = c.idusuario
+           WHERE c.idevento IN (:ids)`,
+          { replacements: { ids: idsEventos }, type: QueryTypes.SELECT }
+        );
+        filasComite.forEach(f => {
+          (comitePorEvento[f.idevento] = comitePorEvento[f.idevento] || []).push({
+            idusuario: f.idusuario,
+            nombre: f.nombre,
+            apellidopat: f.apellidopat,
+            apellidomat: f.apellidomat,
+            rol_comite: f.rol_comite
+          });
+        });
+      } catch (e) {
+        console.warn('⚠️ No se pudo cargar el comité de los eventos:', e.message);
+      }
+    }
+
     const eventosFormateados = eventosUnicos.map(event => {
   const creador = event.academicoCreador;
   const facultadNombre = creador?.academico?.facultad?.nombre_facultad || 'Sin facultad';
@@ -1627,6 +1653,7 @@ const getEventosAprobadosPorFacultad = asyncHandler(async (req, res) => {
     responsable_evento: creador
       ? `${creador.nombre || ''} ${creador.apellidopat || ''}`.trim()
       : 'Sin organizador',  // ← AGREGAR
+    Comite: comitePorEvento[event.idevento] || [],
     category: 'General',
     categoria: 'General',  // ← AGREGAR
     submittedBy: creador
