@@ -3,10 +3,22 @@ const chatBotService = require('../services/chatBotService');
 
 const notificarSala = async (io, { roomId, userId, userName, role, message, timestamp }) => {
   try {
-    if (String(roomId) === 'general') return; // Sin avisos en el chat general
-
     const senderId = parseInt(userId);
-    if (isNaN(senderId)) return;
+    if (isNaN(senderId)) return; // Sin userId válido no notificamos
+
+    if (String(roomId) === 'general') {
+      io.to('evento_general').emit('chat_notification', {
+        type: 'general',
+        roomId: String(roomId),
+        roomName: 'Chat General',
+        userId: senderId,
+        userName: userName || 'Usuario',
+        role,
+        message,
+        timestamp: timestamp || new Date().toISOString()
+      });
+      return;
+    }
 
     const destinatarios = [];
     let roomName = null;
@@ -248,6 +260,15 @@ module.exports = (io) => {
           esBot: true,
           timestamp: new Date().toISOString()
         });
+
+        notificarSala(io, {
+          roomId: eventoId,
+          userId: 0,
+          userName: 'Asistente IA',
+          role: 'bot',
+          message: '⏳ Para programar un recordatorio, por favor usa la sección de "Recordatorios" en la app o escribe: "Vincular mi Telegram [tu_chat_id]" para recibir alertas.',
+          timestamp: new Date().toISOString()
+        });
         
         // Opcional: Si tienes la función a mano, la llamas aquí:
         // await crearRecordatorio(userId, message, eventoId);
@@ -285,6 +306,15 @@ module.exports = (io) => {
             role: 'bot',
             message: respuesta.respuesta,
             esBot: true,
+            timestamp: new Date().toISOString()
+          });
+
+          notificarSala(io, {
+            roomId: eventoId,
+            userId: 0,
+            userName: 'Asistente IA',
+            role: 'bot',
+            message: respuesta.respuesta,
             timestamp: new Date().toISOString()
           });
 
