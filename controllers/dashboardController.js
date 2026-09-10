@@ -363,25 +363,29 @@ const getMyHistoricalData = asyncHandler(async (req, res) => {
 
 const getMyCommitteeEvents = asyncHandler(async (req, res) => {
   const models = getModels();
-  const { Evento, User, Academico, Facultad } = models;
-  const sequelize = models.sequelize;
+  const { Evento, User, Academico, Facultad, Comite } = models;
   
   try {
     const userId = req.user.idusuario;
     
-    // 1. Obtener los IDs de los eventos donde el usuario es miembro del comité
-    const eventosEnComite = await sequelize.query(
-      'SELECT idevento FROM comite WHERE idusuario = ?',
-      { replacements: [userId], type: QueryTypes.SELECT }
-    );
+    // 1. IDs de los eventos donde el usuario es miembro del comité
+    let comiteUsuario = [];
+    try {
+      comiteUsuario = await Comite.findAll({
+        where: { idusuario: userId },
+        attributes: ['idevento']
+      });
+    } catch (e) {
+      console.warn('⚠️ Error al leer comite del usuario:', e.message);
+    }
     
-    const idsEventosComite = eventosEnComite.map(r => r.idevento);
+    const idsEventosComite = comiteUsuario.map(r => r.idevento).filter(Boolean);
     
     if (idsEventosComite.length === 0) {
       return res.status(200).json({ events: [] });
     }
 
-    // 2. Obtener los detalles completos de esos eventos
+    // 2. Detalles completos de esos eventos
     const eventos = await Evento.findAll({
       where: {
         idevento: { [Op.in]: idsEventosComite }
@@ -406,29 +410,34 @@ const getMyCommitteeEvents = asyncHandler(async (req, res) => {
             }
           ]
         }
-      ],
-      order: [['fechaevento', 'ASC'], ['horaevento', 'ASC']]
+      ]
     });
 
-    // 3. Obtener los miembros del comité de esos eventos
-    const [filasComite] = await sequelize.query(
-      `SELECT c.idevento, u.idusuario, u.nombre, u.apellidopat, u.apellidomat
-       FROM comite c
-       JOIN usuario u ON u.idusuario = c.idusuario
-       WHERE c.idevento IN (:ids)`,
-      { replacements: { ids: idsEventosComite }, type: QueryTypes.SELECT }
-    );
-
+    // 3. Miembros del comité de esos eventos (via modelo, sin SQL crudo)
     const comitePorEvento = {};
-    filasComite.forEach(f => {
-      (comitePorEvento[f.idevento] = comitePorEvento[f.idevento] || []).push({
-        idusuario: f.idusuario,
-        nombre: f.nombre,
-        apellidopat: f.apellidopat,
-        apellidomat: f.apellidomat,
-        rol_comite: 'miembro'
+    try {
+      const miembrosAll = await Comite.findAll({
+        where: { idevento: { [Op.in]: idsEventosComite } },
+        include: [
+          {
+            model: User,
+            as: 'miembroComite',
+            attributes: ['idusuario', 'nombre', 'apellidopat', 'apellidomat']
+          }
+        ]
       });
-    });
+      miembrosAll.forEach(m => {
+        (comitePorEvento[m.idevento] = comitePorEvento[m.idevento] || []).push({
+          idusuario: m.idusuario,
+          nombre: m.miembroComite?.nombre || 'Miembro',
+          apellidopat: m.miembroComite?.apellidopat || '',
+          apellidomat: m.miembroComite?.apellidomat || '',
+          rol_comite: 'miembro'
+        });
+      });
+    } catch (e) {
+      console.warn('⚠️ Error al cargar miembros del comité:', e.message);
+    }
 
     // 4. Formatear la respuesta para que coincida con lo que espera el frontend
     const eventosFormateados = eventos.map(event => {
@@ -454,6 +463,8 @@ const getMyCommitteeEvents = asyncHandler(async (req, res) => {
         updated_at: event.updated_at
       };
     });
+
+    eventosFormateados.sort((a, b) => String(a.fechaevento || '').localeCompare(String(b.fechaevento || '')));
 
     res.status(200).json({ events: eventosFormateados });
 

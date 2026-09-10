@@ -1476,7 +1476,7 @@ const getEventosVencidos = asyncHandler(async (req, res) => {
 });
 const getEventosAprobadosPorFacultad = asyncHandler(async (req, res) => {
   const models = getModels();
-  const { Evento, User, Academico, Facultad, Estudiante, Carrera } = models;
+  const { Evento, User, Academico, Facultad, Estudiante, Carrera, Comite } = models;
   
   try {
     const userId = req.user.idusuario;
@@ -1602,24 +1602,26 @@ const getEventosAprobadosPorFacultad = asyncHandler(async (req, res) => {
 
     console.log(`✅ Eventos encontrados para ${userRole}:`, eventosUnicos.length);
 
-    const sequelize = getModels().sequelize;
     const idsEventos = eventosUnicos.map(e => e.idevento);
-    let comitePorEvento = {};
+    const comitePorEvento = {};
     if (idsEventos.length > 0) {
       try {
-        const [filasComite] = await sequelize.query(
-          `SELECT c.idevento, u.idusuario, u.nombre, u.apellidopat, u.apellidomat
-           FROM comite c
-           JOIN usuario u ON u.idusuario = c.idusuario
-           WHERE c.idevento IN (:ids)`,
-          { replacements: { ids: idsEventos }, type: QueryTypes.SELECT }
-        );
-        filasComite.forEach(f => {
-          (comitePorEvento[f.idevento] = comitePorEvento[f.idevento] || []).push({
-            idusuario: f.idusuario,
-            nombre: f.nombre,
-            apellidopat: f.apellidopat,
-            apellidomat: f.apellidomat,
+        const miembrosAll = await Comite.findAll({
+          where: { idevento: { [Op.in]: idsEventos } },
+          include: [
+            {
+              model: User,
+              as: 'miembroComite',
+              attributes: ['idusuario', 'nombre', 'apellidopat', 'apellidomat']
+            }
+          ]
+        });
+        miembrosAll.forEach(m => {
+          (comitePorEvento[m.idevento] = comitePorEvento[m.idevento] || []).push({
+            idusuario: m.idusuario,
+            nombre: m.miembroComite?.nombre || 'Miembro',
+            apellidopat: m.miembroComite?.apellidopat || '',
+            apellidomat: m.miembroComite?.apellidomat || '',
             rol_comite: 'miembro'
           });
         });
