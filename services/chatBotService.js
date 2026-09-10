@@ -1,22 +1,25 @@
 const brain = require('brain.js');
 const { Pool } = require('pg');
+const axios = require('axios');
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-
-const CACHE_TTL = 300000; // 5 minutos
+const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}`;
+const CACHE_TTL = 300000;
 
 class ChatBotService {
   constructor() {
     this.net = null;
     this.isTrained = false;
-    this.cache = new Map(); // Map<eventoId, { data, timestamp }>
-
+    this.cache = new Map();
+    this.userCache = new Map();
     this.entrenar();
   }
 
   entrenar() {
     const trainingData = [
+      // Saludos
       { input: { hola: 1, buen: 1, hey: 1, hi: 1, ey: 1, buenas: 1 }, output: { saludo: 1 } },
+      // Clásicos
       { input: { hora: 1, cuando: 1, tiempo: 1, horario: 1 }, output: { hora: 1 } },
       { input: { lugar: 1, donde: 1, ubicacion: 1, sitio: 1 }, output: { lugar: 1 } },
       { input: { fecha: 1, dia: 1, cuan: 1 }, output: { fecha: 1 } },
@@ -41,134 +44,393 @@ class ChatBotService {
       { input: { publico: 1, audiencia: 1, dirigido: 1, para: 1, participar: 1 }, output: { publico: 1 } },
       { input: { facultad: 1, carrera: 1, departamento: 1, escuela: 1 }, output: { facultad: 1 } },
       { input: { fase: 1, etapa: 1, estado: 1, progreso: 1 }, output: { fase: 1 } },
+      // ── NUEVAS: Quick Actions ──
+      { input: { resumen: 1, dia: 1, hoy: 1, recap: 1, overview: 1 }, output: { resumen_dia: 1 } },
+      { input: { pendiente: 1, pendientes: 1, esperando: 1, aprobacion: 1, revisar: 1 }, output: { pendientes: 1 } },
+      { input: { cercanos: 1, proximos: 1, se acercan: 1, semana: 1, proxima: 1 }, output: { eventos_cercanos: 1 } },
+      // ── NUEVAS: Reports ──
+      { input: { reporte: 1, report: 1, resumen evento: 1, informe: 1, estadistica: 1 }, output: { reporte_evento: 1 } },
+      { input: { cerrado: 1, finalizado: 1, terminado: 1, pasado: 1, anterior: 1, completado: 1 }, output: { evento_cerrado: 1 } },
+      // ── NUEVAS: Notifications ──
+      { input: { telegram: 1, enviar: 1, mandar: 1, notify: 1 }, output: { enviar_telegram: 1 } },
+      { input: { comparar: 1, diferencia: 1, versus: 1, vs: 1, comparacion: 1 }, output: { comparar: 1 } },
+      { input: { sugerencia: 1, sugerir: 1, recomendar: 1, consejo: 1, que hago: 1, que deberia: 1 }, output: { sugerencia: 1 } },
     ];
 
     this.net = new brain.NeuralNetwork({ hiddenLayers: [5], activation: 'sigmoid' });
     this.net.train(trainingData, { iterations: 1000, errorThresh: 0.005, log: false });
     this.isTrained = true;
-    console.log('✅ ChatBot IA entrenado con Brain.js - v2 con contexto ampliado');
+    console.log('✅ ChatBot IA entrenado v4 — Quick Actions + Reports + Telegram');
   }
 
-  // ─── Obtener información completa del evento ──────────────────────────────
-  async getEventoInfo(eventoId) {
-    const cached = this.cache.get(String(eventoId));
-    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
-      return cached.data;
-    }
-
+  async safeQuery(label, sql, params = []) {
     try {
-      // 1. Datos principales del evento + organizador + inscritos + comité
-      const mainRes = await pool.query(`
-        SELECT
-          e.idevento,
-          e.nombreevento,
-          e.fechaevento,
-          e.horaevento,
-          e.lugarevento,
-          e.descripcion,
-          e.estado,
-          e.evento_externo,
-          u.nombre  AS organizador_nombre,
-          u.apellidopat AS organizador_apellido,
-          u.email AS organizador_email,
-          (SELECT COUNT(*) FROM evento_inscripciones ei WHERE ei.idevento = e.idevento) AS total_inscritos,
-          (SELECT COUNT(*) FROM comite c WHERE c.idevento = e.idevento) AS total_comite
-        FROM evento e
-        LEFT JOIN usuario u ON e.idacademico = u.idusuario
-        WHERE e.idevento = $1
-      `, [eventoId]);
-
-      const evento = mainRes.rows[0];
-      if (!evento) return null;
-
-      // 2. Miembros del comité con nombres y roles
-      const comiteRes = await pool.query(`
-        SELECT
-          c.idcomite,
-          c.idusuario,
-          u.nombre,
-          u.apellidopat,
-          u.apellidomat,
-          u.role AS rol_sistema
-        FROM comite c
-        LEFT JOIN usuario u ON c.idusuario = u.idusuario
-        WHERE c.idevento = $1
-        ORDER BY c.idcomite
-      `, [eventoId]);
-
-      evento.comite_miembros = comiteRes.rows.map(m => ({
-        id: m.idusuario,
-        nombre: `${m.nombre || ''} ${m.apellidopat || ''} ${m.apellidomat || ''}`.trim(),
-        rol: m.rol_sistema || 'miembro',
-      }));
-
-      // 3. Tipos de evento
-      const tiposRes = await pool.query(`
-        SELECT te.nombretipo
-        FROM evento_tipos et
-        JOIN tipos_de_evento te ON et.idtipoevento = te.idtipoevento
-        WHERE et.idevento = $1
-      `, [eventoId]);
-
-      evento.tipos = tiposRes.rows.map(r => r.nombretipo);
-
-      // 4. Objetivos del evento
-      const objRes = await pool.query(`
-        SELECT o.texto_personalizado
-        FROM evento_objetivos eo
-        JOIN objetivos o ON eo.idobjetivo = o.idobjetivo
-        WHERE eo.idevento = $1
-      `, [eventoId]);
-
-      evento.objetivos = objRes.rows
-        .map(r => r.texto_personalizado)
-        .filter(Boolean);
-
-      // 5. Segmento / público objetivo
-      const segRes = await pool.query(`
-        SELECT s.nombre_segmento
-        FROM evento_segmento es
-        JOIN segmento s ON es.idsegmento = s.idsegmento
-        WHERE es.idevento = $1
-      `, [eventoId]);
-
-      evento.segmentos = segRes.rows.map(r => r.nombre_segmento);
-
-      // 6. Facultad
-      const facRes = await pool.query(`
-        SELECT f.nombre_facultad
-        FROM "EventoFacultad" ef
-        JOIN facultad f ON ef.idfacultad = f.facultad_id
-        WHERE ef.idevento = $1
-      `, [eventoId]);
-
-      evento.facultades = facRes.rows.map(r => r.nombre_facultad);
-
-      // 7. Fase actual
-      const faseRes = await pool.query(`
-        SELECT nrofase FROM fase WHERE idevento = $1 ORDER BY nrofase DESC LIMIT 1
-      `, [eventoId]);
-
-      evento.fase_actual = faseRes.rows[0]?.nrofase || null;
-
-      // Guardar en caché
-      this.cache.set(String(eventoId), { data: evento, timestamp: Date.now() });
-      return evento;
-    } catch (error) {
-      console.error('❌ Error al obtener info del evento:', error.message);
-      return null;
+      const res = await pool.query(sql, params);
+      return res.rows;
+    } catch (err) {
+      console.warn(`⚠️ [BOT] Query "${label}" falló:`, err.message);
+      return [];
     }
   }
 
-  // ─── Generar respuesta ────────────────────────────────────────────────────
-  async generarRespuesta(pregunta, eventoId = null) {
+  // ─── Info del evento ──────────────────────────────────────────────────────
+  async getEventoInfo(eventoId) {
+    const id = parseInt(eventoId, 10);
+    if (isNaN(id) || id <= 0) return null;
+
+    const cached = this.cache.get(String(id));
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) return cached.data;
+
+    const rows = await this.safeQuery('evento_main', `
+      SELECT e.idevento, e.nombreevento, e.fechaevento, e.horaevento,
+             e.lugarevento, e.descripcion, e.estado, e.evento_externo,
+             u.nombre AS organizador_nombre, u.apellidopat AS organizador_apellido,
+             u.email AS organizador_email
+      FROM evento e
+      LEFT JOIN usuario u ON e.idacademico = u.idusuario
+      WHERE e.idevento = $1
+    `, [id]);
+
+    const ev = rows[0];
+    if (!ev) return null;
+
+    ev.total_inscritos = 0;
+    ev.total_comite = 0;
+    ev.comite_miembros = [];
+    ev.tipos = [];
+    ev.objetivos = [];
+    ev.segmentos = [];
+    ev.facultades = [];
+    ev.fase_actual = null;
+
+    const inscritos = await this.safeQuery('inscritos', `SELECT COUNT(*)::int AS total FROM evento_inscripciones WHERE idevento = $1`, [id]);
+    ev.total_inscritos = inscritos[0]?.total || 0;
+
+    const comiteCount = await this.safeQuery('comite_count', `SELECT COUNT(*)::int AS total FROM comite WHERE idevento = $1`, [id]);
+    ev.total_comite = comiteCount[0]?.total || 0;
+
+    const comiteRows = await this.safeQuery('comite', `
+      SELECT c.idusuario, u.nombre, u.apellidopat, u.apellidomat, u.role AS rol_sistema
+      FROM comite c LEFT JOIN usuario u ON c.idusuario = u.idusuario
+      WHERE c.idevento = $1 ORDER BY c.idcomite
+    `, [id]);
+    ev.comite_miembros = comiteRows.map(m => ({
+      id: m.idusuario,
+      nombre: `${m.nombre || ''} ${m.apellidopat || ''} ${m.apellidomat || ''}`.trim(),
+      rol: m.rol_sistema || 'miembro',
+    }));
+
+    const tipos = await this.safeQuery('tipos', `
+      SELECT te.nombretipo FROM evento_tipos et
+      JOIN tipos_de_evento te ON et.idtipoevento = te.idtipoevento
+      WHERE et.idevento = $1
+    `, [id]);
+    ev.tipos = tipos.map(r => r.nombretipo);
+
+    const objs = await this.safeQuery('objs', `
+      SELECT o.texto_personalizado FROM evento_objetivos eo
+      JOIN objetivos o ON eo.idobjetivo = o.idobjetivo WHERE eo.idevento = $1
+    `, [id]);
+    ev.objetivos = objs.map(r => r.texto_personalizado).filter(Boolean);
+
+    const segs = await this.safeQuery('segs', `
+      SELECT s.nombre_segmento FROM evento_segmento es
+      JOIN segmento s ON es.idsegmento = s.idsegmento WHERE es.idevento = $1
+    `, [id]);
+    ev.segmentos = segs.map(r => r.nombre_segmento);
+
+    const facs = await this.safeQuery('facs', `
+      SELECT f.nombre_facultad FROM "EventoFacultads" ef
+      JOIN facultad f ON ef.idfacultad = f.facultad_id WHERE ef.idevento = $1
+    `, [id]);
+    if (facs.length === 0) {
+      const facs2 = await this.safeQuery('facs2', `
+        SELECT f.nombre_facultad FROM "EventoFacultad" ef
+        JOIN facultad f ON ef.idfacultad = f.facultad_id WHERE ef.idevento = $1
+      `, [id]);
+      ev.facultades = facs2.map(r => r.nombre_facultad);
+    } else {
+      ev.facultades = facs.map(r => r.nombre_facultad);
+    }
+
+    const fase = await this.safeQuery('fase', `SELECT nrofase FROM fase WHERE idevento = $1 ORDER BY nrofase DESC LIMIT 1`, [id]);
+    ev.fase_actual = fase[0]?.nrofase || null;
+
+    this.cache.set(String(id), { data: ev, timestamp: Date.now() });
+    return ev;
+  }
+
+  // ─── Info del usuario (para Quick Actions) ────────────────────────────────
+  async getUserInfo(userId) {
+    const id = parseInt(userId, 10);
+    if (isNaN(id) || id <= 0) return null;
+
+    const cached = this.userCache.get(String(id));
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) return cached.data;
+
+    const rows = await this.safeQuery('user_main', `
+      SELECT idusuario, nombre, apellidopat, apellidomat, email, role, telegram_chat_id
+      FROM usuario WHERE idusuario = $1
+    `, [id]);
+
+    const user = rows[0];
+    if (!user) return null;
+
+    user.tiene_telegram = Boolean(user.telegram_chat_id);
+
+    this.userCache.set(String(id), { data: user, timestamp: Date.now() });
+    return user;
+  }
+
+  // ─── Quick Actions queries ────────────────────────────────────────────────
+  async getResumenDia(userId) {
+    const id = parseInt(userId, 10);
+    if (isNaN(id) || id <= 0) return null;
+
+    const hoy = new Date().toISOString().split('T')[0];
+
+    const misEventos = await this.safeQuery('resumen_hoy', `
+      SELECT e.idevento, e.nombreevento, e.fechaevento, e.horaevento, e.lugarevento, e.estado
+      FROM comite c
+      JOIN evento e ON c.idevento = e.idevento
+      WHERE c.idusuario = $1
+      ORDER BY e.fechaevento ASC
+    `, [id]);
+
+    const pendientes = await this.safeQuery('resumen_pend', `
+      SELECT e.idevento, e.nombreevento, e.fechaevento, e.estado
+      FROM comite c
+      JOIN evento e ON c.idevento = e.idevento
+      WHERE c.idusuario = $1 AND e.estado = 'pendiente'
+    `, [id]);
+
+    const aprobados = await this.safeQuery('resumen_aprob', `
+      SELECT e.idevento, e.nombreevento, e.fechaevento, e.estado
+      FROM comite c
+      JOIN evento e ON c.idevento = e.idevento
+      WHERE c.idusuario = $1 AND e.estado = 'aprobado'
+      AND e.fechaevento >= $2
+      ORDER BY e.fechaevento ASC
+    `, [id, hoy]);
+
+    const completados = await this.safeQuery('resumen_comp', `
+      SELECT e.idevento, e.nombreevento, e.fechaevento, e.estado
+      FROM comite c
+      JOIN evento e ON c.idevento = e.idevento
+      WHERE c.idusuario = $1 AND e.estado = 'completado'
+      ORDER BY e.fechaevento DESC LIMIT 3
+    `, [id]);
+
+    return {
+      totalEventos: misEventos.length,
+      pendientes: pendientes.length,
+      proximos: aprobados.length,
+      completados: completados.length,
+      listaPendientes: pendientes,
+      listaProximos: aprobados,
+      listaCompletados: completados,
+    };
+  }
+
+  async getPendientes(userId) {
+    const id = parseInt(userId, 10);
+    if (isNaN(id) || id <= 0) return [];
+
+    return await this.safeQuery('pendientes', `
+      SELECT e.idevento, e.nombreevento, e.fechaevento, e.estado
+      FROM comite c
+      JOIN evento e ON c.idevento = e.idevento
+      WHERE c.idusuario = $1 AND e.estado = 'pendiente'
+      ORDER BY e.fechaevento ASC
+    `, [id]);
+  }
+
+  async getEventosCercanos(userId) {
+    const id = parseInt(userId, 10);
+    if (isNaN(id) || id <= 0) return [];
+
+    const en7dias = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
+    const hoy = new Date().toISOString().split('T')[0];
+
+    return await this.safeQuery('cercanos', `
+      SELECT e.idevento, e.nombreevento, e.fechaevento, e.horaevento, e.lugarevento, e.estado
+      FROM comite c
+      JOIN evento e ON c.idevento = e.idevento
+      WHERE c.idusuario = $1
+        AND e.estado = 'aprobado'
+        AND e.fechaevento BETWEEN $2 AND $3
+      ORDER BY e.fechaevento ASC
+    `, [id, hoy, en7dias]);
+  }
+
+  // ─── Report queries ───────────────────────────────────────────────────────
+  async getReporteEvento(eventoId) {
+    const ev = await this.getEventoInfo(eventoId);
+    if (!ev) return null;
+
+    const resultado = await this.safeQuery('resultado', `
+      SELECT satisfaccion_esperada, satisfaccion_real, participacion_esperada,
+             participacion_real, otros_resultados, lecciones_aprendidas, analisis_desviaciones
+      FROM resultado WHERE idevento = $1 LIMIT 1
+    `, [eventoId]);
+
+    ev.resultado = resultado[0] || null;
+
+    const fases = await this.safeQuery('fases', `
+      SELECT nrofase FROM fase WHERE idevento = $1 ORDER BY nrofase
+    `, [eventoId]);
+    ev.total_fases = fases.length;
+
+    return ev;
+  }
+
+  async getEventosCerrados(userId) {
+    const id = parseInt(userId, 10);
+    if (isNaN(id) || id <= 0) return [];
+
+    return await this.safeQuery('cerrados', `
+      SELECT e.idevento, e.nombreevento, e.fechaevento, e.estado
+      FROM comite c
+      JOIN evento e ON c.idevento = e.idevento
+      WHERE c.idusuario = $1 AND e.estado IN ('vencido', 'completado')
+      ORDER BY e.fechaevento DESC LIMIT 5
+    `, [id]);
+  }
+
+  // ─── Sugerencias ──────────────────────────────────────────────────────────
+  async getSugerencias(userId) {
+    const resumen = await this.getResumenDia(userId);
+    if (!resumen) return null;
+
+    const sugerencias = [];
+
+    if (resumen.pendientes > 0) {
+      sugerencias.push(`📌 Tienes ${resumen.pendientes} evento(s) pendiente(s) de revisión. Te recomiendo revisarlos pronto.`);
+    }
+    if (resumen.proximos > 0) {
+      sugerencias.push(`📅 Tienes ${resumen.proximos} evento(s) próximo(s). Asegúrate de tener todo preparado.`);
+    }
+    if (resumen.proximos > 0 && resumen.pendientes === 0) {
+      sugerencias.push(`✅ No tienes pendientes. ¡Buen trabajo! Puedes enfocarte en los eventos próximos.`);
+    }
+    if (resumen.totalEventos === 0) {
+      sugerencias.push(`🆕 No participas en ningún evento aún. ¿Te gustaría crear uno nuevo?`);
+    }
+    if (resumen.completados > 0) {
+      sugerencias.push(`🏆 Ya completaste ${resumen.completados} evento(s). ¡Excelente rendimiento!`);
+    }
+
+    return sugerencias.length > 0 ? sugerencias : ['✅ Todo está en orden. ¿Hay algo más en lo que pueda ayudarte?'];
+  }
+
+  // ─── Enviar a Telegram ────────────────────────────────────────────────────
+  async enviarTelegram(chatId, mensaje) {
+    try {
+      const res = await axios.post(`${TELEGRAM_API}/sendMessage`, {
+        chat_id: chatId,
+        text: mensaje,
+        parse_mode: 'HTML',
+      }, { timeout: 10000 });
+      return res.data.ok === true;
+    } catch (err) {
+      console.error('❌ [BOT] Error enviando a Telegram:', err.message);
+      return false;
+    }
+  }
+
+  async enviarReporteTelegram(chatId, eventoId) {
+    const reporte = await this.getReporteEvento(eventoId);
+    if (!reporte) return false;
+
+    const fmtFecha = (f) => {
+      if (!f) return 'Por confirmar';
+      try { return new Date(f).toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }); }
+      catch { return String(f); }
+    };
+
+    let msg = `📊 <b>REPORTE DEL EVENTO</b>\n\n`;
+    msg += `📝 <b>${reporte.nombreevento || 'Sin nombre'}</b>\n`;
+    msg += `📅 ${fmtFecha(reporte.fechaevento)}\n`;
+    msg += `⏰ ${reporte.horaevento || 'Por confirmar'}\n`;
+    msg += `📍 ${reporte.lugarevento || 'Por confirmar'}\n`;
+    msg += `📊 Estado: ${reporte.estado || 'N/A'}\n`;
+    msg += `🔢 Fases: ${reporte.total_fases || 0}\n\n`;
+
+    if (reporte.tipos?.length) msg += `🏷️ Tipo: ${reporte.tipos.join(', ')}\n`;
+    if (reporte.facultades?.length) msg += `🏫 Facultad: ${reporte.facultades.join(', ')}\n`;
+    if (reporte.comite_miembros?.length) msg += `👥 Comité: ${reporte.comite_miembros.length} miembros\n`;
+    msg += `👥 Inscritos: ${reporte.total_inscritos || 0}\n\n`;
+
+    if (reporte.descripcion) {
+      msg += `📖 <b>Descripción:</b>\n${reporte.descripcion.substring(0, 300)}${reporte.descripcion.length > 300 ? '...' : ''}\n\n`;
+    }
+
+    if (reporte.objetivos?.length) {
+      msg += `🎯 <b>Objetivos:</b>\n`;
+      reporte.objetivos.forEach((o, i) => { msg += `  ${i + 1}. ${o}\n`; });
+      msg += '\n';
+    }
+
+    if (reporte.resultado) {
+      const r = reporte.resultado;
+      msg += `📈 <b>Resultados:</b>\n`;
+      if (r.participacion_esperada) msg += `  Participación esperada: ${r.participacion_esperada}\n`;
+      if (r.participacion_real) msg += `  Participación real: ${r.participacion_real}\n`;
+      if (r.satisfaccion_esperada) msg += `  Satisfacción esperada: ${r.satisfaccion_esperada}\n`;
+      if (r.satisfaccion_real) msg += `  Satisfacción real: ${r.satisfaccion_real}\n`;
+      if (r.lecciones_aprendidas) msg += `  📝 Lecciones: ${r.lecciones_aprendidas.substring(0, 200)}\n`;
+      msg += '\n';
+    }
+
+    if (reporte.comite_miembros?.length) {
+      msg += `👥 <b>Comité:</b>\n`;
+      reporte.comite_miembros.forEach(m => { msg += `  • ${m.nombre} (${m.rol})\n`; });
+    }
+
+    return this.enviarTelegram(chatId, msg);
+  }
+
+  async enviarResumenTelegram(chatId, userId) {
+    const resumen = await this.getResumenDia(userId);
+    if (!resumen) return false;
+
+    let msg = `📋 <b>RESUMEN DEL DÍA</b>\n\n`;
+    msg += `📊 Total eventos: ${resumen.totalEventos}\n`;
+    msg += `⏳ Pendientes: ${resumen.pendientes}\n`;
+    msg += `📅 Próximos: ${resumen.proximos}\n`;
+    msg += `✅ Completados: ${resumen.completados}\n\n`;
+
+    if (resumen.listaPendientes?.length) {
+      msg += `⏳ <b>Pendientes:</b>\n`;
+      resumen.listaPendientes.forEach(e => {
+        msg += `  • ${e.nombreevento || 'Sin nombre'}\n`;
+      });
+      msg += '\n';
+    }
+
+    if (resumen.listaProximos?.length) {
+      msg += `📅 <b>Próximos:</b>\n`;
+      resumen.listaProximos.forEach(e => {
+        const fecha = e.fechaevento ? new Date(e.fechaevento).toLocaleDateString('es-ES') : 'Por definir';
+        msg += `  • ${e.nombreevento || 'Sin nombre'} — ${fecha}\n`;
+      });
+    }
+
+    return this.enviarTelegram(chatId, msg);
+  }
+
+  // ─── Main: generar respuesta ──────────────────────────────────────────────
+  async generarRespuesta(pregunta, eventoId = null, userId = null) {
     try {
       const preguntaLower = pregunta.toLowerCase();
       const palabras = preguntaLower.split(/\s+/);
 
-      const eventoInfo = eventoId ? await this.getEventoInfo(eventoId) : null;
+      const eventoInfo = (eventoId && eventoId !== 'null' && eventoId !== 'undefined')
+        ? await this.getEventoInfo(eventoId) : null;
 
-      // Input para la red neuronal
+      const userInfo = (userId && userId !== 'null' && userId !== 'undefined')
+        ? await this.getUserInfo(userId) : null;
+
       const input = {};
       palabras.forEach(p => {
         const limpia = p.replace(/[.,!?;:]/g, '');
@@ -179,7 +441,6 @@ class ChatBotService {
 
       let mejorCategoria = null;
       let mejorProbabilidad = 0;
-
       for (const [categoria, probabilidad] of Object.entries(output)) {
         if (probabilidad > mejorProbabilidad && probabilidad > 0.3) {
           mejorProbabilidad = probabilidad;
@@ -187,13 +448,14 @@ class ChatBotService {
         }
       }
 
-      const respuesta = this._generarPorCategoria(mejorCategoria, eventoInfo, palabras);
+      const respuesta = await this._generarPorCategoria(mejorCategoria, eventoInfo, userInfo, palabras, userId);
 
       return {
         success: true,
         respuesta,
-        modelo: 'Brain.js Neural Network + Database v2',
+        modelo: 'Brain.js Neural Network + DB v4',
         confianza: (mejorProbabilidad * 100).toFixed(0) + '%',
+        categoria: mejorCategoria || 'default',
       };
     } catch (error) {
       console.error('❌ Error en ChatBot:', error);
@@ -206,337 +468,335 @@ class ChatBotService {
     }
   }
 
-  // ─── Respuestas por categoría ─────────────────────────────────────────────
-  _generarPorCategoria(categoria, ev, palabras) {
+  // ─── Respuestas ───────────────────────────────────────────────────────────
+  async _generarPorCategoria(categoria, ev, user, palabras, userId) {
     const fmtFecha = (f) => {
       if (!f) return 'Por confirmar';
-      try {
-        return new Date(f).toLocaleDateString('es-ES', {
-          weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-        });
-      } catch { return String(f); }
+      try { return new Date(f).toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }); }
+      catch { return String(f); }
     };
 
     switch (categoria) {
-      // ── HORA ──
+
+      // ════════════════════════════════════════════════════════════════════════
+      // QUICK ACTIONS
+      // ════════════════════════════════════════════════════════════════════════
+      case 'resumen_dia': {
+        if (!userId || userId === 'null') return 'Necesito estar logueado para darte un resumen. Inicia sesión y vuelve a preguntar.';
+        const resumen = await this.getResumenDia(userId);
+        if (!resumen) return 'No pude obtener tu resumen. Verifica que tengas eventos asignados.';
+
+        let resp = `📋 Resumen del Día:\n\n`;
+        resp += `📊 Total eventos: ${resumen.totalEventos}\n`;
+        resp += `⏳ Pendientes: ${resumen.pendientes}\n`;
+        resp += `📅 Próximos: ${resumen.proximos}\n`;
+        resp += `✅ Completados: ${resumen.completados}\n\n`;
+
+        if (resumen.listaPendientes?.length) {
+          resp += `⏳ Pendientes:\n`;
+          resumen.listaPendientes.forEach(e => { resp += `  • ${e.nombreevento || 'Sin nombre'}\n`; });
+          resp += '\n';
+        }
+        if (resumen.listaProximos?.length) {
+          resp += `📅 Próximos:\n`;
+          resumen.listaProximos.forEach(e => {
+            const fecha = e.fechaevento ? new Date(e.fechaevento).toLocaleDateString('es-ES') : 'Por definir';
+            resp += `  • ${e.nombreevento || 'Sin nombre'} — ${fecha}\n`;
+          });
+          resp += '\n';
+        }
+        resp += `Escribe "pendientes" para ver los detalles o "sugerencias" para acciones recomendadas.`;
+        return resp;
+      }
+
+      case 'pendientes': {
+        if (!userId || userId === 'null') return 'Necesito estar logueado para ver tus pendientes.';
+        const pendientes = await this.getPendientes(userId);
+        if (pendientes.length === 0) return '✅ No tienes eventos pendientes. ¡Todo al día!';
+
+        let resp = `⏳ Eventos Pendientes (${pendientes.length}):\n\n`;
+        pendientes.forEach((e, i) => {
+          resp += `${i + 1}. ${e.nombreevento || 'Sin nombre'}\n`;
+          resp += `   📅 ${fmtFecha(e.fechaevento)}\n\n`;
+        });
+        resp += `¿Necesitas más detalles sobre alguno?`;
+        return resp;
+      }
+
+      case 'eventos_cercanos': {
+        if (!userId || userId === 'null') return 'Necesito estar logueado para ver eventos cercanos.';
+        const cercanos = await this.getEventosCercanos(userId);
+        if (cercanos.length === 0) return '📅 No tienes eventos en los próximos 7 días.';
+
+        let resp = `📅 Eventos Próximos (7 días):\n\n`;
+        cercanos.forEach((e, i) => {
+          resp += `${i + 1}. ${e.nombreevento || 'Sin nombre'}\n`;
+          resp += `   📅 ${fmtFecha(e.fechaevento)}\n`;
+          resp += `   📍 ${e.lugarevento || 'Por confirmar'}\n\n`;
+        });
+        return resp;
+      }
+
+      // ════════════════════════════════════════════════════════════════════════
+      // REPORTS
+      // ════════════════════════════════════════════════════════════════════════
+      case 'reporte_evento': {
+        const eventoId = ev?.idevento || palabras.find(p => /^\d+$/.test(p));
+        if (!eventoId) return '¿De qué evento quieres el reporte? Di el nombre o ID del evento.';
+
+        const reporte = await this.getReporteEvento(eventoId);
+        if (!reporte) return 'No encontré ese evento. Verifica el nombre o ID.';
+
+        let resp = `📊 REPORTE: ${reporte.nombreevento || 'Sin nombre'}\n\n`;
+        resp += `📅 Fecha: ${fmtFecha(reporte.fechaevento)}\n`;
+        resp += `⏰ Hora: ${reporte.horaevento || 'Por confirmar'}\n`;
+        resp += `📍 Lugar: ${reporte.lugarevento || 'Por confirmar'}\n`;
+        resp += `📊 Estado: ${reporte.estado || 'N/A'}\n`;
+        resp += `🔢 Fases: ${reporte.total_fases || 0}\n`;
+        resp += `👥 Inscritos: ${reporte.total_inscritos || 0}\n`;
+        if (reporte.tipos?.length) resp += `🏷️ Tipo: ${reporte.tipos.join(', ')}\n`;
+        if (reporte.facultades?.length) resp += `🏫 Facultad: ${reporte.facultades.join(', ')}\n`;
+        if (reporte.comite_miembros?.length) resp += `👥 Comité: ${reporte.comite_miembros.length} miembros\n`;
+        resp += '\n';
+
+        if (reporte.descripcion) {
+          resp += `📖 Descripción:\n${reporte.descripcion.substring(0, 300)}${reporte.descripcion.length > 300 ? '...' : ''}\n\n`;
+        }
+        if (reporte.objetivos?.length) {
+          resp += `🎯 Objetivos:\n`;
+          reporte.objetivos.forEach((o, i) => { resp += `  ${i + 1}. ${o}\n`; });
+          resp += '\n';
+        }
+        if (reporte.resultado) {
+          const r = reporte.resultado;
+          resp += `📈 Resultados:\n`;
+          if (r.participacion_esperada) resp += `  Esperada: ${r.participacion_esperada}\n`;
+          if (r.participacion_real) resp += `  Real: ${r.participacion_real}\n`;
+          if (r.satisfaccion_real) resp += `  Satisfacción: ${r.satisfaccion_real}\n`;
+          if (r.lecciones_aprendidas) resp += `  📝 Lecciones: ${r.lecciones_aprendidas.substring(0, 200)}\n`;
+        }
+
+        resp += `\n¿Quieres enviar este reporte por Telegram? Escribe "enviar reporte por telegram".`;
+        return resp;
+      }
+
+      case 'evento_cerrado': {
+        if (!userId || userId === 'null') return 'Necesito estar logueado para ver eventos cerrados.';
+        const cerrados = await this.getEventosCerrados(userId);
+        if (cerrados.length === 0) return 'No tienes eventos cerrados o completados recientemente.';
+
+        let resp = `📋 Eventos Cerrados/Completados:\n\n`;
+        cerrados.forEach((e, i) => {
+          resp += `${i + 1}. ${e.nombreevento || 'Sin nombre'}\n`;
+          resp += `   📅 ${fmtFecha(e.fechaevento)} — ${e.estado}\n\n`;
+        });
+        resp += `Escribe "reporte" seguido del nombre o ID para ver el reporte detallado.`;
+        return resp;
+      }
+
+      // ════════════════════════════════════════════════════════════════════════
+      // TELEGRAM
+      // ════════════════════════════════════════════════════════════════════════
+      case 'enviar_telegram': {
+        if (!user?.tiene_telegram) {
+          return `📱 No tienes Telegram vinculado.\n\nPara vincular:\n1. Abre @EventUniBot en Telegram\n2. Envía tu email institucional\n3. Listo, podrás recibir notificaciones.`;
+        }
+        if (ev?.idevento) {
+          const ok = await this.enviarReporteTelegram(user.telegram_chat_id, ev.idevento);
+          return ok
+            ? `✅ Reporte enviado a tu Telegram (@${user.telegram_username || 'usuario'}).`
+            : '❌ No pude enviar el reporte. Verifica tu Telegram vinculado.';
+        }
+        const ok = await this.enviarResumenTelegram(user.telegram_chat_id, userId);
+        return ok
+          ? `✅ Resumen enviado a tu Telegram.`
+          : '❌ No pude enviar el resumen. Verifica tu Telegram vinculado.';
+      }
+
+      // ════════════════════════════════════════════════════════════════════════
+      // SUGERENCIAS
+      // ════════════════════════════════════════════════════════════════════════
+      case 'sugerencia': {
+        if (!userId || userId === 'null') return 'Necesito estar logueado para darte sugerencias.';
+        const sugerencias = await this.getSugerencias(userId);
+        if (!sugerencias) return 'No pude analizar tu situación. Intenta de nuevo.';
+
+        let resp = `💡 Sugerencias para ti:\n\n`;
+        sugerencias.forEach(s => { resp += `${s}\n\n`; });
+        return resp;
+      }
+
+      // ════════════════════════════════════════════════════════════════════════
+      // CLÁSICOS (con contexto de evento)
+      // ════════════════════════════════════════════════════════════════════════
       case 'hora':
-        if (ev) {
-          return `📅 Información del Horario:\n\n` +
-            `⏰ Hora: ${ev.horaevento || 'Por confirmar'}\n` +
-            `📆 Fecha: ${fmtFecha(ev.fechaevento)}\n` +
-            (ev.lugarevento ? `📍 Lugar: ${ev.lugarevento}\n` : '') +
-            `\nTe recomiendo llegar 15 minutos antes.`;
-        }
-        return 'El horario del evento está disponible en los detalles. Revisa la información del evento para confirmar la hora exacta.';
+        if (ev) return `📅 Horario:\n⏰ Hora: ${ev.horaevento || 'Por confirmar'}\n📆 Fecha: ${fmtFecha(ev.fechaevento)}\n${ev.lugarevento ? `📍 Lugar: ${ev.lugarevento}\n` : ''}\nLlega 15 min antes.`;
+        return 'El horario está en los detalles del evento.';
 
-      // ── LUGAR ──
       case 'lugar':
-        if (ev) {
-          return `📍 Ubicación del Evento:\n\n` +
-            `🏛️ Lugar: ${ev.lugarevento || 'Por confirmar'}\n` +
-            `📝 Evento: ${ev.nombreevento || 'Evento'}\n` +
-            (ev.facultades?.length ? `🏫 Facultad: ${ev.facultades.join(', ')}\n` : '') +
-            `\nSi tienes dudas sobre cómo llegar, contacta al organizador.`;
-        }
-        return 'El lugar del evento está especificado en los detalles. Puedes consultarlo en la información del evento.';
+        if (ev) return `📍 Lugar:\n🏛️ ${ev.lugarevento || 'Por confirmar'}\n📝 ${ev.nombreevento || 'Evento'}\n${ev.facultades?.length ? `🏫 ${ev.facultades.join(', ')}\n` : ''}`;
+        return 'El lugar está en los detalles del evento.';
 
-      // ── FECHA ──
       case 'fecha':
-        if (ev) {
-          return `📅 Fecha del Evento:\n\n` +
-            `🗓️ Día: ${fmtFecha(ev.fechaevento)}\n` +
-            `⏰ Hora: ${ev.horaevento || 'Por confirmar'}\n` +
-            (ev.estado ? `📊 Estado: ${ev.estado}\n` : '') +
-            `\n¡No faltes!`;
-        }
-        return 'La fecha del evento está disponible en los detalles.';
+        if (ev) return `📅 Fecha:\n🗓️ ${fmtFecha(ev.fechaevento)}\n⏰ ${ev.horaevento || 'Por confirmar'}\n${ev.estado ? `📊 Estado: ${ev.estado}\n` : ''}`;
+        return 'La fecha está en los detalles.';
 
-      // ── CERTIFICADO ──
       case 'certificado':
-        return `📜 Información sobre Certificados:\n\n` +
-          `✅ Sí se entrega certificado al finalizar el evento\n` +
-          `📋 Requisitos: Asistencia completa (mínimo 90%)\n` +
-          `⏰ Entrega: Al finalizar el evento o dentro de 5 días hábiles\n\n` +
-          `El certificado incluye horas de capacitación y es válido para tu expediente.`;
+        return '📜 Sí se entrega certificado con 90% de asistencia. Se entrega al finalizar o en 5 días hábiles.';
 
-      // ── COSTO ──
       case 'costo':
-        if (ev) {
-          return `💰 Información del Evento:\n\n` +
-            `📝 Evento: ${ev.nombreevento || 'Evento'}\n` +
-            `✅ Este evento es gratuito para todos los participantes registrados\n` +
-            (ev.total_inscritos ? `👥 Actualmente hay ${ev.total_inscritos} persona(s) inscrita(s)\n` : '') +
-            `\nSolo necesitas registrarte con anticipación.`;
-        }
-        return 'Este evento es gratuito para todos los participantes registrados.';
+        if (ev) return `💰 Evento: ${ev.nombreevento || 'Evento'}\n✅ Gratuito\n${ev.total_inscritos ? `👥 ${ev.total_inscritos} inscritos\n` : ''}`;
+        return 'Este evento es gratuito.';
 
-      // ── INSCRIPCIÓN ──
       case 'inscripcion':
-        if (ev) {
-          const inscritos = ev.total_inscritos || 0;
-          return `📝 Inscripciones:\n\n` +
-            `👥 Inscritos: ${inscritos} persona(s)\n` +
-            `📊 Estado: ${ev.estado || 'Activo'}\n` +
-            (ev.evento_externo ? `🌐 Evento abierto al público externo\n` : '') +
-            `\nPara inscribirte, usa el botón de inscripción en la plataforma.`;
-        }
-        return 'Para inscribirte, contacta al organizador del evento o revisa el formulario de registro disponible en la plataforma.';
+        if (ev) return `📝 Inscritos: ${ev.total_inscritos || 0}\n📊 Estado: ${ev.estado || 'Activo'}\n${ev.evento_externo ? `🌐 Público externo\n` : ''}`;
+        return 'Inscríbete en la plataforma.';
 
-      // ── REQUISITOS ──
       case 'requisitos':
-        if (ev?.segmentos?.length) {
-          return `📋 Requisitos y Público Objetivo:\n\n` +
-            `🎯 Dirigido a: ${ev.segmentos.join(', ')}\n` +
-            `✅ Obligatorio: Estar registrado en el evento\n` +
-            (ev.descripcion ? `\n📝 Descripción: ${ev.descripcion.substring(0, 200)}${ev.descripcion.length > 200 ? '...' : ''}\n` : '') +
-            `\nPuedes preguntar por horarios, lugar u otros detalles.`;
-        }
-        return `📋 Requisitos para Participar:\n\n` +
-          `✅ Obligatorios:\n• Estar registrado en el evento\n• Traer laptop con batería cargada\n• Tener conocimientos básicos del tema\n\n` +
-          `📚 Recomendados:\n• Cuaderno para apuntes\n• USB para guardar material\n• Ganas de aprender`;
+        if (ev?.segmentos?.length) return `📋 Dirigido a: ${ev.segmentos.join(', ')}\n✅ Obligatorio: Estar registrado\n${ev.descripcion ? `\n📝 ${ev.descripcion.substring(0, 200)}...` : ''}`;
+        return '✅ Obligatorio: Estar registrado, laptop, conocimientos básicos.';
 
-      // ── CONTACTO ──
       case 'contacto':
         if (ev) {
-          let resp = `📞 Contacto del Evento:\n\n`;
-          resp += `👤 Organizador: ${ev.organizador_nombre || ''} ${ev.organizador_apellido || ''}\n`;
-          if (ev.organizador_email) resp += `📧 Email: ${ev.organizador_email}\n`;
+          let r = `📞 Contacto:\n👤 ${ev.organizador_nombre || ''} ${ev.organizador_apellido || ''}\n`;
+          if (ev.organizador_email) r += `📧 ${ev.organizador_email}\n`;
           if (ev.comite_miembros?.length) {
-            resp += `\n👥 Comité (${ev.comite_miembros.length} miembros):\n`;
-            ev.comite_miembros.slice(0, 5).forEach(m => {
-              resp += `  • ${m.nombre} (${m.rol})\n`;
-            });
-            if (ev.comite_miembros.length > 5) resp += `  ... y ${ev.comite_miembros.length - 5} más\n`;
+            r += `\n👥 Comité (${ev.comite_miembros.length}):\n`;
+            ev.comite_miembros.slice(0, 5).forEach(m => { r += `  • ${m.nombre}\n`; });
           }
-          resp += `\n💬 Usa este chat para dudas rápidas.`;
-          return resp;
+          return r;
         }
-        return `📞 Contacto y Soporte:\n\n👤 Organizador: Consulta la lista de miembros del comité\n💬 Chat: Usa este chat para dudas rápidas\n\nEstamos aquí para ayudarte.`;
+        return 'Contacta al organizador desde la lista de comité.';
 
-      // ── MIEMBROS ──
       case 'miembros':
         if (ev) {
-          let resp = `👥 Equipo Organizador:\n\n`;
-          resp += `👤 Organizador: ${ev.organizador_nombre || 'Académico'} ${ev.organizador_apellido || ''}\n`;
+          let r = `👥 Comité:\n👤 Organizador: ${ev.organizador_nombre || ''} ${ev.organizador_apellido || ''}\n`;
           if (ev.comite_miembros?.length) {
-            resp += `\n👥 Miembros del comité (${ev.comite_miembros.length}):\n`;
-            ev.comite_miembros.forEach(m => {
-              resp += `  • ${m.nombre} — ${m.rol}\n`;
-            });
-          } else {
-            resp += `\n👥 Miembros del comité: ${ev.total_comite || 0} personas\n`;
+            ev.comite_miembros.forEach(m => { r += `  • ${m.nombre} — ${m.rol}\n`; });
           }
-          resp += `\nPuedes escribir "contacto" para más datos.`;
-          return resp;
+          return r;
         }
-        return 'Puedes contactar al organizador directamente desde la lista de miembros del comité.';
+        return 'Consulta la lista de miembros del comité.';
 
-      // ── ESTUDIANTES ──
       case 'estudiantes':
-        if (ev) {
-          const inscritos = ev.total_inscritos || 0;
-          return `📊 Estadísticas de Participación:\n\n` +
-            `👥 Total inscritos: ${inscritos} persona(s)\n` +
-            `📝 Estado del evento: ${ev.estado || 'Activo'}\n` +
-            (ev.comite_miembros?.length ? `👥 Comité organizador: ${ev.comite_miembros.length} miembros\n` : '') +
-            `\n¡Cada vez somos más!`;
-        }
-        return 'Hay varios estudiantes inscritos en el evento. Revisa las estadísticas en el panel.';
+        if (ev) return `📊 Inscritos: ${ev.total_inscritos || 0}\n📝 Estado: ${ev.estado || 'Activo'}\n${ev.comite_miembros?.length ? `👥 Comité: ${ev.comite_miembros.length}\n` : ''}`;
+        return 'Revisa las estadísticas en el panel.';
 
-      // ── PROGRAMA ──
       case 'programa':
         if (ev) {
-          let resp = `📋 Programa del Evento:\n\n`;
-          resp += `📝 ${ev.nombreevento || 'Evento'}\n`;
-          resp += `📅 ${fmtFecha(ev.fechaevento)}\n`;
-          resp += `⏰ ${ev.horaevento || 'Horario por confirmar'}\n`;
-          resp += `📍 ${ev.lugarevento || 'Lugar por confirmar'}\n`;
-          if (ev.descripcion) {
-            resp += `\n📖 Descripción:\n${ev.descripcion.substring(0, 300)}${ev.descripcion.length > 300 ? '...' : ''}\n`;
-          }
-          resp += `\nEl programa puede sufrir modificaciones menores.`;
-          return resp;
+          let r = `📋 ${ev.nombreevento || 'Evento'}\n📅 ${fmtFecha(ev.fechaevento)}\n⏰ ${ev.horaevento || 'Por confirmar'}\n📍 ${ev.lugarevento || 'Por confirmar'}\n`;
+          if (ev.descripcion) r += `\n📖 ${ev.descripcion.substring(0, 300)}...\n`;
+          return r;
         }
-        return `📋 Programa del Evento:\n\n⏰ 08:00 - 08:30 - Registro y bienvenida\n📅 08:30 - 10:00 - Primera sesión\n⏰ 10:00 - 10:30 - Pausa activa\n📅 10:30 - 12:00 - Segunda sesión\n⏰ 12:00 - 12:30 - Conclusiones y entrega de certificados\n\nNota: El programa puede sufrir modificaciones menores.`;
+        return 'Programa: 08:00-12:30. Ver detalles del evento.';
 
-      // ── MATERIAL ──
       case 'material':
-        return `📚 Material Necesario:\n\n` +
-          `✅ Obligatorio:\n• Laptop con batería cargada\n• Conexión a internet (si es virtual/híbrido)\n\n` +
-          `📚 Recomendado:\n• Cuaderno y lapicero\n• USB para guardar archivos\n• Audífonos (si es virtual)\n\n` +
-          `El material de apoyo se proporcionará durante el evento.`;
+        return '📚 Laptop con batería, internet, cuaderno, USB, audífonos (si es virtual).';
 
-      // ── EXPOSITOR ──
       case 'expositor':
         if (ev) {
-          let resp = `🎓 Expositores del Evento:\n\n`;
-          resp += `👤 Organizador: ${ev.organizador_nombre || 'Académico'} ${ev.organizador_apellido || ''}\n`;
-          if (ev.comite_miembros?.length) {
-            resp += `\n👥 Comité participante:\n`;
-            ev.comite_miembros.forEach(m => {
-              resp += `  • ${m.nombre}\n`;
-            });
-          }
-          resp += `\nProfesionales con amplia experiencia en el tema.`;
-          return resp;
+          let r = `🎓 Expositores:\n👤 ${ev.organizador_nombre || ''} ${ev.organizador_apellido || ''}\n`;
+          if (ev.comite_miembros?.length) ev.comite_miembros.forEach(m => { r += `  • ${m.nombre}\n`; });
+          return r;
         }
-        return 'Los expositores están listados en la información del evento. Son profesionales con amplia experiencia.';
+        return 'Expositores en la información del evento.';
 
-      // ── TEMA ──
       case 'tema':
         if (ev) {
-          let resp = `📚 Sobre el Evento:\n\n`;
-          resp += `🎯 Nombre: ${ev.nombreevento || 'Evento'}\n`;
-          if (ev.tipos?.length) resp += `🏷️ Tipo: ${ev.tipos.join(', ')}\n`;
-          if (ev.descripcion) resp += `\n📝 Descripción:\n${ev.descripcion.substring(0, 400)}${ev.descripcion.length > 400 ? '...' : ''}\n`;
-          if (ev.objetivos?.length) {
-            resp += `\n🎯 Objetivos:\n`;
-            ev.objetivos.forEach(o => { resp += `  • ${o}\n`; });
-          }
-          return resp;
+          let r = `📚 ${ev.nombreevento || 'Evento'}\n`;
+          if (ev.tipos?.length) r += `🏷️ ${ev.tipos.join(', ')}\n`;
+          if (ev.descripcion) r += `\n📝 ${ev.descripcion.substring(0, 400)}...\n`;
+          if (ev.objetivos?.length) { r += `\n🎯 Objetivos:\n`; ev.objetivos.forEach(o => { r += `  • ${o}\n`; }); }
+          return r;
         }
-        return 'Los temas del evento están en la descripción. Revisa los detalles para más información.';
+        return 'Revisa los detalles del evento.';
 
-      // ── DURACIÓN ──
       case 'duracion':
-        if (ev) {
-          return `⏱️ Duración del Evento:\n\n` +
-            `📅 Fecha: ${fmtFecha(ev.fechaevento)}\n` +
-            `⏰ Hora: ${ev.horaevento || 'Por confirmar'}\n` +
-            `📍 Lugar: ${ev.lugarevento || 'Por confirmar'}\n\n` +
-            `Te recomendamos llegar 15 minutos antes.`;
-        }
-        return 'La duración del evento está en los detalles. Generalmente dura entre 2-4 horas.';
+        if (ev) return `⏱️ 📅 ${fmtFecha(ev.fechaevento)}\n⏰ ${ev.horaevento || 'Por confirmar'}\n📍 ${ev.lugarevento || 'Por confirmar'}`;
+        return 'Duración en los detalles. Generalmente 2-4 horas.';
 
-      // ── SALUDO ──
-      case 'saludo': {
-        let resp = `¡Hola! 👋\n\nSoy tu asistente virtual del evento`;
-        if (ev) resp += ` "${ev.nombreevento || ''}"`;
-        resp += `. Estoy aquí para ayudarte con:\n\n` +
-          `• 🕐 Horarios y fechas\n• 📍 Ubicación\n• 📜 Certificados\n` +
-          `• 💰 Costos e inscripciones\n• 👥 Miembros del comité\n• 📊 Estadísticas\n`;
-        if (ev?.objetivos?.length) resp += `• 🎯 Objetivos del evento\n`;
-        if (ev?.tipos?.length) resp += `• 🏷️ Tipo de evento\n`;
-        resp += `\n¿En qué puedo ayudarte hoy?`;
-        return resp;
-      }
-
-      // ── GRACIAS ──
-      case 'gracias':
-        return `¡De nada! 😊\n\nEstoy aquí para ayudarte. Si tienes más preguntas, no dudes en preguntar.\n\n¡Que tengas un excelente día!`;
-
-      // ── ADIÓS ──
-      case 'adios':
-        return `¡Hasta luego! 👋\n\nEspero verte en el evento. ¡Que tengas un excelente día!`;
-
-      // ── AYUDA ──
-      case 'ayuda': {
-        let resp = `💡 Puedo ayudarte con:\n\n` +
-          `• 🕐 Horarios - "¿A qué hora es?"\n` +
-          `• 📍 Ubicación - "¿Dónde es?"\n` +
-          `• 📅 Fechas - "¿Cuándo es?"\n` +
-          `• 📜 Certificados - "¿Dan certificado?"\n` +
-          `• 💰 Costos - "¿Cuánto cuesta?"\n` +
-          `• 📝 Inscripciones - "¿Cómo me inscribo?"\n` +
-          `• 👥 Miembros - "¿Quiénes organizan?"\n` +
-          `• 📊 Estadísticas - "¿Cuántos inscritos?"\n`;
-        if (ev?.objetivos?.length) resp += `• 🎯 Objetivos - "¿Cuáles son los objetivos?"\n`;
-        if (ev?.tipos?.length) resp += `• 🏷️ Tipo - "¿Qué tipo de evento es?"\n`;
-        if (ev?.segmentos?.length) resp += `• 🎯 Público - "¿A quién va dirigido?"\n`;
-        resp += `\n¡Solo pregúntame!`;
-        return resp;
-      }
-
-      // ── RECORDATORIO ──
-      case 'recordatorio':
-        return `⏰ Sistema de Recordatorios\n\n` +
-          `Puedo ayudarte a crear recordatorios de varias formas:\n\n` +
-          `📱 Desde el chat:\nEscribe: "recuérdame [fecha] [tarea]"\n` +
-          `Ejemplo: "recuérdame mañana revisar el evento"\n\n` +
-          `📲 Por Telegram:\n1. Vincula tu cuenta\n2. Recibirás alertas automáticas\n\n` +
-          `🔔 Recordatorios automáticos:\n• 3 días antes del evento\n• El día del evento\n\n` +
-          `¿Quieres crear un recordatorio ahora?`;
-
-      // ── OBJETIVOS (nuevo) ──
       case 'objetivos':
         if (ev?.objetivos?.length) {
-          let resp = `🎯 Objetivos del Evento:\n\n`;
-          ev.objetivos.forEach((o, i) => { resp += `${i + 1}. ${o}\n`; });
-          if (ev.descripcion) resp += `\n📝 ${ev.descripcion.substring(0, 200)}${ev.descripcion.length > 200 ? '...' : ''}`;
-          return resp;
+          let r = `🎯 Objetivos:\n`;
+          ev.objetivos.forEach((o, i) => { r += `${i + 1}. ${o}\n`; });
+          return r;
         }
-        if (ev) return `🎯 El evento "${ev.nombreevento || ''}" aún no tiene objetivos registrados.\n\nPuedes preguntar por otros detalles como horarios, ubicación o inscripciones.`;
-        return 'No tengo información sobre los objetivos de este evento.';
+        if (ev) return `🎯 "${ev.nombreevento || ''}" sin objetivos registrados.`;
+        return 'Sin info de objetivos.';
 
-      // ── TIPO (nuevo) ──
       case 'tipo':
         if (ev) {
-          let resp = `🏷️ Tipo de Evento:\n\n`;
-          resp += `📝 Evento: ${ev.nombreevento || 'Sin nombre'}\n`;
-          if (ev.tipos?.length) resp += `🏷️ Tipo(s): ${ev.tipos.join(', ')}\n`;
-          if (ev.facultades?.length) resp += `🏫 Facultad: ${ev.facultades.join(', ')}\n`;
-          if (ev.estado) resp += `📊 Estado: ${ev.estado}\n`;
-          if (ev.evento_externo) resp += `🌐 Evento externo (abierto al público)\n`;
-          return resp;
+          let r = `🏷️ ${ev.nombreevento || 'Sin nombre'}\n`;
+          if (ev.tipos?.length) r += `🏷️ ${ev.tipos.join(', ')}\n`;
+          if (ev.facultades?.length) r += `🏫 ${ev.facultades.join(', ')}\n`;
+          if (ev.estado) r += `📊 ${ev.estado}\n`;
+          return r;
         }
-        return 'No tengo información sobre el tipo de evento.';
+        return 'Sin info de tipo.';
 
-      // ── PÚBLICO / AUDIENCIA (nuevo) ──
       case 'publico':
-        if (ev?.segmentos?.length) {
-          let resp = `🎯 Público Objetivo:\n\n`;
-          resp += `👥 Dirigido a: ${ev.segmentos.join(', ')}\n`;
-          if (ev.facultades?.length) resp += `🏫 Facultad(es): ${ev.facultades.join(', ')}\n`;
-          if (ev.descripcion) resp += `\n📝 ${ev.descripcion.substring(0, 200)}${ev.descripcion.length > 200 ? '...' : ''}`;
-          return resp;
-        }
-        if (ev) return `🎯 El evento "${ev.nombreevento || ''}" no tiene segmento específico definido.\n\nPuedes preguntar por otros detalles.`;
-        return 'No tengo información sobre el público objetivo de este evento.';
+        if (ev?.segmentos?.length) return `🎯 Dirigido a: ${ev.segmentos.join(', ')}\n${ev.facultades?.length ? `🏫 ${ev.facultades.join(', ')}\n` : ''}`;
+        if (ev) return `🎯 "${ev.nombreevento || ''}" sin segmento definido.`;
+        return 'Sin info de público.';
 
-      // ── FACULTAD (nuevo) ──
       case 'facultad':
-        if (ev) {
-          let resp = `🏫 Facultad del Evento:\n\n`;
-          resp += `📝 Evento: ${ev.nombreevento || 'Sin nombre'}\n`;
-          if (ev.facultades?.length) resp += `🏫 Facultad(es): ${ev.facultades.join(', ')}\n`;
-          else resp += `🏫 Facultad: No especificada\n`;
-          if (ev.organizador_nombre) resp += `👤 Organizador: ${ev.organizador_nombre} ${ev.organizador_apellido || ''}\n`;
-          return resp;
-        }
-        return 'No tengo información sobre la facultad de este evento.';
+        if (ev) return `🏫 ${ev.nombreevento || 'Sin nombre'}\n${ev.facultades?.length ? `Facultad: ${ev.facultades.join(', ')}` : 'Facultad: No especificada'}`;
+        return 'Sin info de facultad.';
 
-      // ── FASE (nuevo) ──
       case 'fase':
-        if (ev) {
-          return `📊 Fase del Evento:\n\n` +
-            `📝 Evento: ${ev.nombreevento || 'Sin nombre'}\n` +
-            `📊 Estado: ${ev.estado || 'No definido'}\n` +
-            (ev.fase_actual ? `🔢 Fase actual: ${ev.fase_actual}\n` : '') +
-            `\nPuedes preguntar por horarios, ubicación u otros detalles.`;
-        }
-        return 'No tengo información sobre la fase de este evento.';
+        if (ev) return `📊 ${ev.nombreevento || 'Sin nombre'}\nEstado: ${ev.estado || 'N/A'}\n${ev.fase_actual ? `Fase: ${ev.fase_actual}` : ''}`;
+        return 'Sin info de fase.';
 
-      // ── DEFAULT ──
+      // ════════════════════════════════════════════════════════════════════════
+      // CLÁSICOS (sin evento)
+      // ════════════════════════════════════════════════════════════════════════
+      case 'saludo': {
+        let r = `¡Hola! 👋 Soy tu asistente virtual`;
+        if (ev) r += ` del evento "${ev.nombreevento || ''}"`;
+        r += `. Puedo ayudarte con:\n\n`;
+        r += `📋 Quick Actions:\n  • "Resumen del día"\n  • "Qué tengo pendiente"\n  • "Eventos cercanos"\n  • "Sugerencias"\n\n`;
+        r += `📊 Reports:\n  • "Reporte del evento"\n  • "Eventos cerrados"\n\n`;
+        r += `📱 Telegram:\n  • "Enviar resumen por Telegram"\n  • "Enviar reporte por Telegram"\n\n`;
+        r += `🔍 Clásicos:\n  • Horarios, ubicación, certificados, costos, inscripciones\n\n`;
+        r += `¿En qué puedo ayudarte?`;
+        return r;
+      }
+
+      case 'gracias':
+        return '¡De nada! 😊 Estoy aquí para ayudarte.';
+
+      case 'adios':
+        return '¡Hasta luego! 👋 Espero verte en el evento.';
+
+      case 'ayuda': {
+        let r = `💡 TODO lo que puedo hacer:\n\n`;
+        r += `📋 QUICK ACTIONS:\n  • "Resumen del día" — Tu resumen rápido\n`;
+        r += `  • "Qué tengo pendiente" — Eventos esperando\n`;
+        r += `  • "Eventos cercanos" — Próximos 7 días\n`;
+        r += `  • "Sugerencias" — Qué deberías hacer\n\n`;
+        r += `📊 REPORTS:\n  • "Reporte del evento X" — Reporte completo\n`;
+        r += `  • "Eventos cerrados" — Historial\n\n`;
+        r += `📱 TELEGRAM:\n  • "Enviar resumen por Telegram"\n`;
+        r += `  • "Enviar reporte por Telegram"\n\n`;
+        r += `🔍 CLÁSICOS:\n  • Horarios, ubicación, certificados, costos\n`;
+        r += `  • Inscripciones, comité, objetivos, tipo\n\n`;
+        if (user?.tiene_telegram) r += `✅ Telegram vinculado: @${user.telegram_username || 'usuario'}\n`;
+        else r += `⚠️ Telegram no vinculado. Abre @EventUniBot y envía tu email.\n`;
+        return r;
+      }
+
+      case 'recordatorio':
+        return '⏰ Recordatorios:\n• Recuérdame [fecha] [tarea]\n• O vincula Telegram para alertas automáticas.';
+
+      // ════════════════════════════════════════════════════════════════════════
+      // DEFAULT
+      // ════════════════════════════════════════════════════════════════════════
       default:
-        if (palabras.some(p => ['hola', 'hi', 'hey', 'buenas', 'ey', 'que tal', 'holi'].includes(p))) {
-          return `¡Hola! 👋 Soy tu asistente virtual${ev ? ` del evento "${ev.nombreevento || ''}"` : ''}. Pregúntame sobre horarios, ubicación, certificados, costos o inscripciones.`;
-        }
-        if (palabras.some(p => ['hora', 'horario', 'tiempo'].includes(p))) {
-          return ev
-            ? `⏰ El evento es a las ${ev.horaevento || 'por confirmar'} del día ${fmtFecha(ev.fechaevento)}.`
-            : 'El horario está disponible en los detalles del evento.';
-        }
-        if (palabras.some(p => ['lugar', 'donde', 'ubicacion'].includes(p))) {
-          return ev
-            ? `📍 El evento se realiza en: ${ev.lugarevento || 'por confirmar'}.`
-            : 'El lugar está especificado en los detalles.';
-        }
-        if (palabras.some(p => ['certificado', 'diploma'].includes(p))) {
-          return '✅ Sí se entrega certificado con 90% de asistencia.';
+        if (palabras.some(p => ['hola', 'hi', 'hey', 'buenas', 'ey'].includes(p))) {
+          return `¡Hola! 👋 Pregúntame sobre horarios, resumen del día, reportes o envía algo por Telegram.`;
         }
         return `No tengo información específica sobre eso. 😅\n\n` +
-          `Puedes preguntarme sobre:\n• Horarios y fechas\n• Ubicación\n• Certificados\n• Costos\n• Inscripciones\n• Miembros del comité\n• Objetivos\n• Tipo de evento\n\n` +
-          `O escribe "ayuda" para ver todas las opciones.`;
+          `Escribe "ayuda" para ver todo lo que puedo hacer.`;
     }
   }
 

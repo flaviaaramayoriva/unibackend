@@ -5,6 +5,7 @@ const { Op } = require('sequelize');
 const PDFDocument = require('pdfkit');
 const { PassThrough } = require('stream');
 const FormData = require('form-data');
+const chatBotService = require('../services/chatBotService');
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}`;
@@ -949,7 +950,14 @@ Ejemplo: <code>juan.perez@unifranz.edu.bo</code>
 • /ficha_pdf - Descargar ficha en PDF
 • /estado - Verificar vinculación
 • /desvincular - Desvincular cuenta de Telegram
-• /ayuda - Mostrar ayuda`;
+• /ayuda - Mostrar ayuda
+
+<b>🤖 Asistente IA:</b>
+También puedes escribirme en lenguaje natural:
+• "Resumen del día"
+• "Qué tengo pendiente"
+• "Reporte del evento X"
+• "Enviar reporte por Telegram"`;
 
       await axios.post(`${TELEGRAM_API}/sendMessage`, {
         chat_id: chatId,
@@ -1265,6 +1273,15 @@ Usa /mis_eventos, /pendientes, /rechazados o /comite para ver detalles.`;
 • /resumen - Resumen completo con estadísticas
 • /ficha_pdf - Descargar ficha en PDF
 
+<b>🤖 Asistente IA (escribe libremente):</b>
+• "Resumen del día" — Tu resumen rápido
+• "Qué tengo pendiente" — Eventos esperando
+• "Eventos cercanos" — Próximos 7 días
+• "Sugerencias" — Qué deberías hacer
+• "Reporte del evento X" — Reporte completo
+• "Eventos cerrados" — Historial
+• "Enviar reporte por Telegram"
+
 <b>Otros:</b>
 • /ayuda - Mostrar esta ayuda`;
 
@@ -1387,10 +1404,21 @@ Si quieres volver a vincular tu cuenta, envía tu email institucional.`;
       return res.status(200).send('OK');
     }
 
-    // Comando no reconocido
+    // ── Conversación IA (texto libre no reconocido) ──
+    const models = getModels();
+    const { User } = models;
+    const usuario = await User.findOne({ where: { telegram_chat_id: chatId.toString() } });
+
+    const pregunta = chatBotService.extraerPregunta(text);
+    const respuesta = await chatBotService.generarRespuesta(pregunta, null, usuario?.idusuario || null);
+
+    let reply = respuesta.respuesta || 'No entendí. Usa /ayuda para ver los comandos.';
+    if (reply.length > 4000) reply = reply.substring(0, 4000) + '...';
+
     await axios.post(`${TELEGRAM_API}/sendMessage`, {
       chat_id: chatId,
-      text: '❌ Comando no reconocido.\n\nUsa /ayuda para ver los comandos disponibles.',
+      text: reply,
+      parse_mode: 'HTML',
     });
 
   } catch (error) { 

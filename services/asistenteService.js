@@ -1,29 +1,26 @@
-// src/services/asistenteService.js
 const chatBotService = require('./chatBotService');
 
 const asistente = async (req, res) => {
   try {
-    const { message, userId, userName } = req.body;
-    const { eventId } = req.params; // ✅ FIX: el eventId viene en la URL, no en el body
+    const { message, userId, userName, userRole } = req.body;
+    const { eventId } = req.params;
 
     if (!message) {
       return res.status(400).json({ error: 'Se requiere un mensaje' });
     }
 
-    console.log('🤖 [API] Pregunta recibida:', message, '| eventId:', eventId);
+    console.log('🤖 [API] Pregunta:', message, '| eventId:', eventId, '| userId:', userId);
 
-    // Extraer la pregunta limpia (quita /bot, /pregunta, etc.)
     const pregunta = chatBotService.extraerPregunta(message);
+    const respuesta = await chatBotService.generarRespuesta(pregunta, eventId, userId);
 
-    // Generar respuesta con Brain.js, ahora sí con el contexto del evento
-    const respuesta = await chatBotService.generarRespuesta(pregunta, eventId);
-
-    console.log('✅ [API] Respuesta generada:', respuesta.respuesta);
+    console.log('✅ [API] Respuesta:', respuesta.respuesta?.substring(0, 80) + '...');
 
     res.json({
       success: true,
       respuesta: respuesta.respuesta,
-      modelo: respuesta.modelo
+      modelo: respuesta.modelo,
+      categoria: respuesta.categoria,
     });
 
   } catch (error) {
