@@ -47,7 +47,7 @@ class ChatBotService {
       // ── NUEVAS: Quick Actions ──
       { input: { resumen: 1, dia: 1, hoy: 1, recap: 1, overview: 1 }, output: { resumen_dia: 1 } },
       { input: { pendiente: 1, pendientes: 1, esperando: 1, aprobacion: 1, revisar: 1 }, output: { pendientes: 1 } },
-      { input: { cercanos: 1, proximos: 1, se acercan: 1, semana: 1, proxima: 1 }, output: { eventos_cercanos: 1 } },
+      { input: { cercanos: 1, proximos: 1, semana: 1, proxima: 1 }, output: { eventos_cercanos: 1 } },
       // ── NUEVAS: Reports ──
       { input: { reporte: 1, report: 1, resumen evento: 1, informe: 1, estadistica: 1 }, output: { reporte_evento: 1 } },
       { input: { cerrado: 1, finalizado: 1, terminado: 1, pasado: 1, anterior: 1, completado: 1 }, output: { evento_cerrado: 1 } },
