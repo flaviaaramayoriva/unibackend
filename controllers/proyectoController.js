@@ -164,8 +164,8 @@ const createEvento = async (req, res) => {
       ? JSON.parse(data.resultados_esperados)
       : (data.resultados_esperados || {});
 
-    await sequelize.query(
-      'INSERT INTO resultado (idevento, participacion_esperada, satisfaccion_esperada, otros_resultados) VALUES (?, ?, ?, ?)',
+    const [resResult] = await sequelize.query(
+      'INSERT INTO resultado (idevento, participacion_esperada, satisfaccion_esperada, otros_resultados) VALUES (?, ?, ?, ?) RETURNING idresultado',
       {
         replacements: [
           nuevoEventoId,
@@ -176,18 +176,37 @@ const createEvento = async (req, res) => {
         transaction: t
       }
     );
+    const idresultadoNuevo = resResult[0]?.idresultado;
+    if (idresultadoNuevo) {
+      nuevoEvento.idresultado = idresultadoNuevo;
+      await nuevoEvento.save({ transaction: t });
+    }
     console.log('✅ Resultados insertados');
 
      if (Array.isArray(data.recursos_existentes) && data.recursos_existentes.length > 0) {
       const recursosData = data.recursos_existentes.map(r => [
-        nuevoEventoId, 
-        r.idrecurso || r.id // Extrae solo el ID numérico
+        nuevoEventoId,
+        r.idrecurso || r.id, // Extrae solo el ID numérico
+        Math.max(1, parseInt(r.cantidad, 10) || 1)
       ]);
-      
-      await sequelize.query(
-        `INSERT INTO evento_recurso (idevento, idrecurso) VALUES ${recursosData.map(() => '(?, ?)').join(', ')}`,
-        { replacements: recursosData.flat(), transaction: t }
+
+      const [cantidadCol] = await sequelize.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_name = 'evento_recurso' AND column_name = 'cantidad' LIMIT 1`,
+        { transaction: t, type: sequelize.QueryTypes.SELECT }
       );
+      const hasCantidadCol = !!cantidadCol;
+
+      if (hasCantidadCol) {
+        await sequelize.query(
+          `INSERT INTO evento_recurso (idevento, idrecurso, cantidad) VALUES ${recursosData.map(() => '(?, ?, ?)').join(', ')}`,
+          { replacements: recursosData.flat(), transaction: t }
+        );
+      } else {
+        await sequelize.query(
+          `INSERT INTO evento_recurso (idevento, idrecurso) VALUES ${recursosData.map(() => '(?, ?)').join(', ')}`,
+          { replacements: recursosData.map(([idevento, idrecurso]) => [idevento, idrecurso]).flat(), transaction: t }
+        );
+      }
       console.log('✅ Recursos existentes vinculados:', data.recursos_existentes.length);
     }
 
@@ -265,6 +284,19 @@ const createEvento = async (req, res) => {
     // 13. COMMIT FINAL (Solo si TODO lo anterior fue exitoso)
     await t.commit();
     console.log('✅✅✅ Transacción completada exitosamente ✅✅✅\n');
+
+    // 13b. VINCULAR FACULTAD DIRIGIDA (fuera de la transacción, no debe romper la creación)
+    if (data.facultad_dirigida) {
+      try {
+        await sequelize.query(
+          'INSERT INTO "EventoFacultads" (idevento, idfacultad) VALUES (?, ?)',
+          { replacements: [nuevoEventoId, data.facultad_dirigida] }
+        );
+        console.log('✅ Facultad dirigida vinculada al evento:', data.facultad_dirigida);
+      } catch (facError) {
+        console.warn('⚠️ No se pudo vincular la facultad dirigida:', facError.message);
+      }
+    }
 
     // 14. ENVIAR NOTIFICACIONES (Fuera de la transacción)
     if (Array.isArray(data.comite) && data.comite.length > 0) {
