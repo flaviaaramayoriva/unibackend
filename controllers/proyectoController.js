@@ -21,6 +21,12 @@ const safeJsonParse = (jsonString, defaultValue = {}) => {
   }
 };
 
+const minutosDelDia = (hora) => {
+  const partes = String(hora || '').split(':').map(Number);
+  if (partes.length < 2 || partes.some(isNaN)) return null;
+  return partes[0] * 60 + partes[1];
+};
+
 
 const createEvento = async (req, res) => {
   let models;
@@ -47,6 +53,35 @@ const createEvento = async (req, res) => {
     if (!data.nombreevento || !data.fechaevento) {
       await t.rollback();
       return res.status(400).json({ message: 'Campos requeridos: nombreevento, fechaevento' });
+    }
+
+    // 0. LÍMITE: máximo 2 eventos por día y sin eventos pendientes/aprobados a la misma hora
+    const fechaISO = String(data.fechaevento || '').slice(0, 10);
+    if (!fechaISO) {
+      await t.rollback();
+      return res.status(400).json({ message: 'Fecha del evento inválida.' });
+    }
+    const eventosDelDia = await sequelize.query(
+      `SELECT idevento, horaevento FROM evento
+       WHERE CAST(fechaevento AS DATE) = CAST(:fecha AS DATE)
+         AND estado IN ('pendiente', 'aprobado')
+       ORDER BY horaevento ASC`,
+      { replacements: { fecha: fechaISO }, type: QueryTypes.SELECT, transaction: t }
+    );
+
+    if (eventosDelDia.length >= 2) {
+      await t.rollback();
+      return res.status(409).json({ message: `El día ${fechaISO} ya tiene 2 eventos programados (máximo permitido por día). Elige otra fecha.` });
+    }
+
+    const minNueva = minutosDelDia(data.horaevento);
+    const conflictoHora = eventosDelDia.find(e => {
+      const minExistente = minutosDelDia(e.horaevento);
+      return minNueva !== null && minExistente !== null && Math.abs(minNueva - minExistente) < 120;
+    });
+    if (conflictoHora) {
+      await t.rollback();
+      return res.status(409).json({ message: 'Ya existe un evento pendiente o aprobado el mismo día a la misma hora (rango de 2 horas). Elige otra hora.' });
     }
 
     // 1. CREAR EVENTO PRINCIPAL
