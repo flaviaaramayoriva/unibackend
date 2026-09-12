@@ -26,6 +26,7 @@ const reportes = async (req, res) => {
    try {
     const { periodo = 'mes' } = req.query;
     const { start, end } = getDateRange(periodo);
+    const { sequelize } = getModels();
 
     console.log('📊 Reporte DAF - Período:', periodo);
 

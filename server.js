@@ -111,6 +111,7 @@ const startServer = async () => {
     app.use('/bot',           require('./routes/botRoutes.js'));
     app.use('/daf',           require('./routes/dafRoutes.js'));
     app.use('/predictions',   require('./routes/predictionRoutes.js'));
+    app.use('/reportes',      require('./routes/reportes.js'));
     app.use('/chat',           require('./routes/chatRoutes.js'));
     const chatSocket = require('./sockets/chatSocket.js');
     chatSocket(io);
