@@ -131,23 +131,33 @@ const getReporteOperacionales = async (req, res) => {
 const getReporteEconomicos = async (req, res) => {
   try {
     const { sequelize } = getModels();
+    const { where, replacements } = filtroFecha(req.query);
 
-    const [resumen] = await sequelize.query(
-      `SELECT
-        (SELECT COALESCE(SUM(total_egresos), 0)    FROM presupuesto)    AS pres_egresos,
-        (SELECT COALESCE(SUM(total_ingresos), 0)   FROM presupuesto)    AS pres_ingresos,
-        (SELECT COALESCE(SUM(total_egresos_real), 0)  FROM informe_evento) AS real_egresos,
-        (SELECT COALESCE(SUM(total_ingresos_real), 0) FROM informe_evento) AS real_ingresos,
-        (SELECT COALESCE(SUM(balance_real), 0)     FROM informe_evento) AS balance_real`,
+    // Presupuesto planificado es global (no depende de fechas del evento)
+    const [pres] = await sequelize.query(
+      `SELECT COALESCE(SUM(total_egresos), 0) AS egresos,
+              COALESCE(SUM(total_ingresos), 0) AS ingresos
+       FROM presupuesto`,
       { type: sequelize.QueryTypes.SELECT }
     );
 
+    // Ejecución real filtrada por fechas del evento
+    const [real] = await sequelize.query(
+      `SELECT COALESCE(SUM(ie.total_egresos_real), 0)  AS egresos,
+              COALESCE(SUM(ie.total_ingresos_real), 0) AS ingresos,
+              COALESCE(SUM(ie.balance_real), 0)        AS balance
+       FROM informe_evento ie
+       JOIN evento e ON e.idevento = ie.idevento
+       ${where}`,
+      { replacements, type: sequelize.QueryTypes.SELECT }
+    );
+
     const resumenNumerico = {
-      pres_egresos: parseFloat(resumen.pres_egresos || 0),
-      pres_ingresos: parseFloat(resumen.pres_ingresos || 0),
-      real_egresos: parseFloat(resumen.real_egresos || 0),
-      real_ingresos: parseFloat(resumen.real_ingresos || 0),
-      balance_real: parseFloat(resumen.balance_real || 0),
+      pres_egresos: parseFloat(pres?.egresos || 0),
+      pres_ingresos: parseFloat(pres?.ingresos || 0),
+      real_egresos: parseFloat(real?.egresos || 0),
+      real_ingresos: parseFloat(real?.ingresos || 0),
+      balance_real: parseFloat(real?.balance || 0),
     };
 
     const porFacultad = await sequelize.query(
@@ -159,8 +169,9 @@ const getReporteEconomicos = async (req, res) => {
        JOIN evento e ON e.idevento = ie.idevento
        LEFT JOIN academico a ON a.idacademico = e.idacademico
        LEFT JOIN facultad f ON f.facultad_id = a.facultad_id
+       ${where}
        GROUP BY f.nombre_facultad
-       ORDER BY egresos_promedio DESC`, { type: sequelize.QueryTypes.SELECT }
+       ORDER BY egresos_promedio DESC`, { replacements, type: sequelize.QueryTypes.SELECT }
     );
 
     const porMes = await sequelize.query(
@@ -171,9 +182,9 @@ const getReporteEconomicos = async (req, res) => {
               COUNT(*)::int AS informes
        FROM informe_evento ie
        JOIN evento e ON e.idevento = ie.idevento
-       WHERE e.fechaevento IS NOT NULL
+       ${where ? where : 'WHERE e.fechaevento IS NOT NULL'}
        GROUP BY 1
-       ORDER BY 1 ASC`, { type: sequelize.QueryTypes.SELECT }
+       ORDER BY 1 ASC`, { replacements, type: sequelize.QueryTypes.SELECT }
     );
 
     const porEvento = await sequelize.query(
@@ -186,8 +197,9 @@ const getReporteEconomicos = async (req, res) => {
        FROM evento e
        LEFT JOIN presupuesto p ON p.idevento = e.idevento
        LEFT JOIN informe_evento ie ON ie.idevento = e.idevento
+       ${where}
        ORDER BY e.fechaevento DESC
-       LIMIT 20`, { type: sequelize.QueryTypes.SELECT }
+       LIMIT 20`, { replacements, type: sequelize.QueryTypes.SELECT }
     );
 
     res.status(200).json({
