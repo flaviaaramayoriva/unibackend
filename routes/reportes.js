@@ -8,7 +8,7 @@ const {
   getReporteRecursos,
   getReporteTipos,
 } = require('../controllers/reportesAvanzadosController.js');
-const protect = require('../middleware/authMiddleware.js');
+const { protect } = require('../middleware/authMiddleware.js');
 
 router.get('/reporte/estadisticas', protect, estadisticas);
 router.get('/', protect, getReporteRecursos);
