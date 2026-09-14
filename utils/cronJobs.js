@@ -32,50 +32,57 @@ const marcarEventosVencidos = async () => {
     const { Evento } = getModels();
     const sequelize = getModels().sequelize;
 
-    // Solo se compara la parte de fecha (10 primeros caracteres) porque la columna
-    // fechaevento es VARCHAR y puede guardar '2026-09-14' o '2026-09-14 00:00:00.000 +00:00'.
-    // Comparamos con la fecha de hoy en formato ISO (YYYY-MM-DD, UTC) para que un evento
-    // del mismo día NO se marque como vencido.
-    const hoyISO = new Date().toISOString().slice(0, 10);
-    console.log('📅 Fecha de hoy (ISO):', hoyISO);
+    // Horario local de la app (La Paz, UTC-4, sin horario de verano). Las fechas/horas
+    // de los eventos se guardan en hora local, por eso se compara contra la hora local.
+    // La columna fechaevento es VARCHAR y puede guardar '2026-09-14' o
+    // '2026-09-14 00:00:00.000 +00:00'; por eso se compara solo la parte de fecha.
+    const ahoraLocal = new Date(Date.now() - 4 * 60 * 60 * 1000);
+    const hoyLocal = ahoraLocal.toISOString().slice(0, 10);   // YYYY-MM-DD
+    const horaLocal = ahoraLocal.toISOString().slice(11, 16); // HH:mm
+    console.log('📅 Hoy (local UTC-4):', hoyLocal, horaLocal);
 
-    const condicionVencier = sequelize.where(
-      sequelize.fn('LEFT', sequelize.col('fechaevento'), 10),
-      Op.lt,
-      hoyISO
-    );
-
-    // Buscar eventos
-    const eventosPorVencer = await Evento.findAll({
+    // Candidatos: aprobados/activos cuya fecha ya pasó o es hoy (la hora se revisa en JS)
+    const candidatos = await Evento.findAll({
       where: {
         [Op.and]: [
-          condicionVencier,
+          sequelize.where(sequelize.fn('LEFT', sequelize.col('fechaevento'), 10), Op.lte, hoyLocal),
           { estado: { [Op.in]: ['aprobado', 'activo'] } }
         ]
       }
     });
 
-    console.log(`📋 Encontrados ${eventosPorVencer.length} eventos por vencer`);
-    eventosPorVencer.forEach(e => {
-      console.log(`   - ID:${e.idevento} | ${e.nombreevento} | Fecha:${e.fechaevento} | Estado:${e.estado}`);
+    const porVencer = [];
+    candidatos.forEach(e => {
+      const fechaEv = String(e.fechaevento || '').slice(0, 10);
+      if (fechaEv < hoyLocal) {
+        porVencer.push(e);
+      } else if (fechaEv === hoyLocal) {
+        const horaEv = String(e.horaevento || '').slice(0, 5);
+        const esHoraValida = /^\d{2}:\d{2}$/.test(horaEv);
+        if (esHoraValida && horaEv < horaLocal) porVencer.push(e);
+      }
     });
 
-    if (eventosPorVencer.length === 0) {
+    console.log(`📋 Candidatos: ${candidatos.length} | A vencer: ${porVencer.length}`);
+    porVencer.forEach(e => {
+      console.log(`   - ID:${e.idevento} | ${e.nombreevento} | Fecha:${e.fechaevento} | Hora:${e.horaevento} | Estado:${e.estado}`);
+    });
+
+    if (porVencer.length === 0) {
       console.log('✅ No hay eventos para actualizar');
       return;
     }
 
     // Actualizar
     console.log('🔄 Ejecutando UPDATE...');
+    const idsPorVencer = porVencer.map(e => e.idevento);
     const [cantidad] = await Evento.update(
-  { estado: 'vencido' },  
-  { where:  {
-      [Op.and]: [
-        condicionVencier,
-        { estado: { [Op.in]: ['aprobado', 'activo'] } }
-      ]
-  }}
-);
+      { estado: 'vencido' },
+      { where: {
+          idevento: { [Op.in]: idsPorVencer },
+          estado: { [Op.in]: ['aprobado', 'activo'] }
+      }}
+    );
 
     console.log(`✅ UPDATE completado. Filas afectadas: ${cantidad}`);
 
@@ -96,12 +103,12 @@ const limpiarEventosMuyAntiguos = async () => {
     const { Evento } = getModels();
     const sequelize = getModels().sequelize;
 
-    const haceDosSemanasISO = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const haceDosSemanasLocal = new Date(Date.now() - 4 * 60 * 60 * 1000 - 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
     const [cantidad] = await Evento.destroy({
       where: {
         [Op.and]: [
-          sequelize.where(sequelize.fn('LEFT', sequelize.col('fechaevento'), 10), Op.lt, haceDosSemanasISO),
+          sequelize.where(sequelize.fn('LEFT', sequelize.col('fechaevento'), 10), Op.lt, haceDosSemanasLocal),
           { estado: 'vencido' }
         ]
       }
@@ -118,7 +125,8 @@ const iniciarCronJobs = async () => {
   
   await marcarEventosVencidos();
   
-  cron.schedule('0 0 * * *', () => {
+  cron.schedule('*/30 * * * *', () => {
+    // Cada 30 min para detectar el vencimiento por HORA de eventos del día
     console.log('🔄 Ejecutando cron: marcarEventosVencidos');
     marcarEventosVencidos();
   });
@@ -129,7 +137,7 @@ const iniciarCronJobs = async () => {
   });
 
   console.log('✅ Cron jobs configurados:');
-  console.log('   - Marcar vencidos: Todos los días a 00:00');
+  console.log('   - Marcar vencidos (fecha u hora pasada): cada 30 minutos');
   console.log('   - Limpiar antiguos: Domingos a 03:00');
 };
 

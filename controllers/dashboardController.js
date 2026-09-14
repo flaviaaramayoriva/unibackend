@@ -367,20 +367,37 @@ const getMyCommitteeEvents = asyncHandler(async (req, res) => {
   
   try {
     const userId = req.user.idusuario;
-    
-    // 1. IDs de los eventos donde el usuario es miembro del comité
-    let comiteUsuario = [];
+    const soloCreados = req.query.creador === '1' || req.query.solo === 'creador';
+
+    // a) Eventos que el usuario CREÓ (el creador puede no estar en la tabla comite)
+    let idsCreados = [];
     try {
-      comiteUsuario = await Comite.findAll({
+      const academico = await Academico.findOne({ where: { idusuario: userId }, attributes: ['idacademico'] });
+      if (academico) {
+        const creados = await Evento.findAll({ where: { idacademico: academico.idacademico }, attributes: ['idevento'] });
+        idsCreados = creados.map(r => r.idevento).filter(Boolean);
+      }
+    } catch (e) {
+      console.warn('⚠️ Error al leer academico del usuario:', e.message);
+    }
+
+    // b) Eventos donde el usuario es MIEMBRO del comité
+    let idsComite = [];
+    try {
+      const comiteUsuario = await Comite.findAll({
         where: { idusuario: userId },
         attributes: ['idevento']
       });
+      idsComite = comiteUsuario.map(r => r.idevento).filter(Boolean);
     } catch (e) {
       console.warn('⚠️ Error al leer comite del usuario:', e.message);
     }
-    
-    const idsEventosComite = comiteUsuario.map(r => r.idevento).filter(Boolean);
-    
+
+    // Por defecto: unión (creados + comité). Con creador=1, solo los que creó.
+    const idsEventosComite = soloCreados
+      ? idsCreados
+      : [...new Set([...idsCreados, ...idsComite])];
+
     if (idsEventosComite.length === 0) {
       return res.status(200).json({ events: [] });
     }
