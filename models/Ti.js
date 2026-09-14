@@ -4,7 +4,8 @@ module.exports = (sequelize, DataTypes) => {
       idTi: { 
       type: DataTypes.INTEGER,
       primaryKey: true,
-      autoIncrement: true
+      autoIncrement: true,
+      field: 'id_ti'
     },
     idusuario: { // Clave foránea que referencia a la tabla 'usuarios'
       type: DataTypes.INTEGER,
@@ -13,7 +14,8 @@ module.exports = (sequelize, DataTypes) => {
     },
     nivelAcceso: {
       type: DataTypes.INTEGER,
-      defaultValue: 8
+      defaultValue: 8,
+      field: 'nivel_acceso'
     },
     // Otros campos específicos de Administrador
   }, {

@@ -10,7 +10,8 @@ const Subcategoria = sequelize.define('Subcategoria', {
   },
   nombreSubcategoria: {
     type: DataTypes.STRING(100),
-    allowNull: false
+    allowNull: false,
+    field: 'nombre_subcategoria'
   },
   idclasificacion: {
     type: DataTypes.INTEGER,

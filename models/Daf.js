@@ -5,7 +5,8 @@ module.exports = (sequelize,DataTypes)=>{
        idDaf: { 
       type: DataTypes.INTEGER,
       primaryKey: true,
-      autoIncrement: true
+      autoIncrement: true,
+      field: 'id_daf'
     },
     idusuario: { 
       type: DataTypes.INTEGER,
@@ -14,7 +15,8 @@ module.exports = (sequelize,DataTypes)=>{
     },
     nivelAcceso: {
       type: DataTypes.INTEGER,
-      defaultValue: 6
+      defaultValue: 6,
+      field: 'nivel_acceso'
     },
   }, {
     tableName: 'daf',

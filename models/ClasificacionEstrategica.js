@@ -11,7 +11,8 @@ const Clasificacion = sequelize.define('ClasificacionEstrategica', {
   },
   nombreClasificacion: {
     type: DataTypes.STRING(100),
-    allowNull: false
+    allowNull: false,
+    field: 'nombre_clasificacion'
   },
  
 }, {

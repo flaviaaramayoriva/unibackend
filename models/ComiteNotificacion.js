@@ -21,7 +21,7 @@ module.exports = (sequelize,DataTypes) =>{
     field: 'created_at'
   }
 }, {
-  tableName: 'evento_comite',
+  tableName: 'comite_notificacion',
   timestamps: false
 });
 return ComiteNotificacion;

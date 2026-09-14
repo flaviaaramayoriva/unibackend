@@ -3,7 +3,8 @@ module.exports = (sequelize,DataTypes)=>{
       idServiciosEstudiantiles: { 
       type: DataTypes.INTEGER,
       primaryKey: true,
-      autoIncrement: true
+      autoIncrement: true,
+      field: 'id_servicios_estudiantiles'
     },
     idusuario: { // Clave foránea que referencia a la tabla 'usuarios'
       type: DataTypes.INTEGER,
@@ -12,11 +13,12 @@ module.exports = (sequelize,DataTypes)=>{
     },
     nivelAcceso: {
       type: DataTypes.INTEGER,
-      defaultValue: 10
+      defaultValue: 10,
+      field: 'nivel_acceso'
     },
     // Otros campos específicos de Administrador
   }, {
-    tableName: 'serviciosEstudiantiles',
+    tableName: '_serviciosestudiantiles',
     timestamps: false // Opcional: si no quieres timestamps en esta tabla
   });
 

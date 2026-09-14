@@ -10,8 +10,12 @@ module.exports = (sequelize,DataTypes) => {
         idfacultad: {
             type: DataTypes.INTEGER,
             primaryKey: true,
-            references: { model: 'facultad', key: 'idfacultad' }
+            field: 'facultad_id',
+            references: { model: 'facultad', key: 'facultad_id' }
         }
+    }, {
+    tableName: 'evento_facultad',
+    timestamps: false
     });
     return EventoFacultad;
 };

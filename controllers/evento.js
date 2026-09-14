@@ -503,7 +503,7 @@ const getEventoById = asyncHandler(async (req, res) => {
     );
 
     const [clasificacionData] = await sequelize.query(
-      `SELECT e."idevento", c."nombre_clasificacion", s."nombre_subcategoria",
+      `SELECT e."idevento", c."nombre_clasificacion" AS "nombreClasificacion", s."nombre_subcategoria" AS "nombresubcategoria",
               c."idclasificacion", s."idsubcategoria"
        FROM "evento" e
        LEFT JOIN "clasificacion_estrategica" c ON e."idclasificacion" = c."idclasificacion"

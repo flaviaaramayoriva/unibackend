@@ -623,14 +623,14 @@ const appChat = async (req, res) => {
           sender, 
           text: message, 
           role: 'user', 
-          eventId: eventId || null, 
+          idevento: eventId || null, 
           timestamp: new Date() 
         }),
         Message.create({ 
           sender, 
           text: reply, 
           role: 'bot', 
-          eventId: eventId || null, 
+          idevento: eventId || null, 
           timestamp: new Date() 
         })
       ]);
@@ -750,7 +750,7 @@ const telegramWebhook = async (req, res) => {
       try {
         if (evento.idclasificacion) {
           const [clasif] = await models.sequelize.query(
-            `SELECT idclasificacion, "nombreClasificacion" FROM clasificacion_estrategica WHERE idclasificacion = ?`,
+            `SELECT idclasificacion, "nombre_clasificacion" AS "nombreClasificacion" FROM clasificacion_estrategica WHERE idclasificacion = ?`,
             { replacements: [evento.idclasificacion], type: models.sequelize.QueryTypes.SELECT }
           );
           evento.dataValues.clasificacion = clasif || null;
@@ -761,7 +761,7 @@ const telegramWebhook = async (req, res) => {
       try {
         if (evento.idsubcategoria) {
           const [subcat] = await models.sequelize.query(
-            `SELECT idsubcategoria, nombresubcategoria FROM subcategoria WHERE idsubcategoria = ?`,
+            `SELECT idsubcategoria, "nombre_subcategoria" AS "nombresubcategoria" FROM subcategoria WHERE idsubcategoria = ?`,
             { replacements: [evento.idsubcategoria], type: models.sequelize.QueryTypes.SELECT }
           );
           evento.dataValues.subcategoria = subcat || null;

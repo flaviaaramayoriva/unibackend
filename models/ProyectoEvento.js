@@ -15,7 +15,7 @@ module.exports = (sequelize, DataTypes) => {
         references: { model: 'ProyectoEstrategico', key: 'idproyecto' }
     }
 }, {
-  tableName: 'proyecto_evento',
+  tableName: 'proyectoevento',
   timestamps: false
 });
 return ProyectoEvento;

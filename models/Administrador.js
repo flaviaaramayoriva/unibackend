@@ -18,7 +18,8 @@ module.exports = (sequelize, DataTypes) => {
        },
        nivelAcceso: {
          type: DataTypes.INTEGER,
-         defaultValue: 1
+         defaultValue: 1,
+         field: 'nivel_acceso'
        },
   }, {
     tableName: 'administrador',

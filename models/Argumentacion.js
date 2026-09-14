@@ -17,6 +17,15 @@ module.exports = (sequelize, DataTypes) => {
         key: 'idevento'
       }
     },
+    idobjetivo: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: 'idobjetivo',
+      references: {
+        model: 'objetivos',
+        key: 'idobjetivo'
+      }
+    },
     texto_argumentacion: {
       type: DataTypes.STRING,
       allowNull: true,
