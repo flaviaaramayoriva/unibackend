@@ -30,16 +30,28 @@ const marcarEventosVencidos = async () => {
   
   try {
     const { Evento } = getModels();
-    const hoy = new Date();
-    hoy.setHours(0, 0, 0, 0);
+    const sequelize = getModels().sequelize;
 
-    console.log('📅 Fecha de hoy:', hoy.toISOString());
+    // Solo se compara la parte de fecha (10 primeros caracteres) porque la columna
+    // fechaevento es VARCHAR y puede guardar '2026-09-14' o '2026-09-14 00:00:00.000 +00:00'.
+    // Comparamos con la fecha de hoy en formato ISO (YYYY-MM-DD, UTC) para que un evento
+    // del mismo día NO se marque como vencido.
+    const hoyISO = new Date().toISOString().slice(0, 10);
+    console.log('📅 Fecha de hoy (ISO):', hoyISO);
+
+    const condicionVencier = sequelize.where(
+      sequelize.fn('LEFT', sequelize.col('fechaevento'), 10),
+      Op.lt,
+      hoyISO
+    );
 
     // Buscar eventos
     const eventosPorVencer = await Evento.findAll({
       where: {
-        fechaevento: { [Op.lt]: hoy },
-        estado: { [Op.in]: ['aprobado', 'activo'] }
+        [Op.and]: [
+          condicionVencier,
+          { estado: { [Op.in]: ['aprobado', 'activo'] } }
+        ]
       }
     });
 
@@ -58,8 +70,10 @@ const marcarEventosVencidos = async () => {
     const [cantidad] = await Evento.update(
   { estado: 'vencido' },  
   { where:  {
-      fechaevento: { [Op.lt]: hoy }, 
-      estado: { [Op.in]: ['aprobado', 'activo'] }  // consistente con el findAll
+      [Op.and]: [
+        condicionVencier,
+        { estado: { [Op.in]: ['aprobado', 'activo'] } }
+      ]
   }}
 );
 
@@ -80,13 +94,16 @@ const marcarEventosVencidos = async () => {
 const limpiarEventosMuyAntiguos = async () => {
   try {
     const { Evento } = getModels();
-    const haceDosSemanas = new Date();
-    haceDosSemanas.setDate(haceDosSemanas.getDate() - 14);
+    const sequelize = getModels().sequelize;
+
+    const haceDosSemanasISO = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
     const [cantidad] = await Evento.destroy({
       where: {
-        fechaevento: { [Op.lt]: haceDosSemanas },
-        estado: 'vencido'
+        [Op.and]: [
+          sequelize.where(sequelize.fn('LEFT', sequelize.col('fechaevento'), 10), Op.lt, haceDosSemanasISO),
+          { estado: 'vencido' }
+        ]
       }
     });
 
