@@ -200,7 +200,7 @@ const createEvento = async (req, res) => {
       : (data.resultados_esperados || {});
 
     const [resResult] = await sequelize.query(
-      'INSERT INTO resultado (idevento, participacion_esperada, satisfaccion_esperada, otros_resultados) VALUES (?, ?, ?, ?) RETURNING idresultado',
+      'INSERT INTO resultado (idevento, participacion_esperada, satisfaccion_esperada, otros_resultados) VALUES (?, ?, ?, ?) RETURNING idresultados_esperados',
       {
         replacements: [
           nuevoEventoId,
@@ -211,7 +211,7 @@ const createEvento = async (req, res) => {
         transaction: t
       }
     );
-    const idresultadoNuevo = resResult[0]?.idresultado;
+    const idresultadoNuevo = resResult[0]?.idresultados_esperados;
     if (idresultadoNuevo) {
       nuevoEvento.idresultado = idresultadoNuevo;
       await nuevoEvento.save({ transaction: t });
