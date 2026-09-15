@@ -19,6 +19,30 @@ const safeJsonParse = (jsonString, defaultValue = {}) => {
     console.warn('JSON parse error:', error.message);
     return defaultValue;
   }
+  const formatValue = (v) => {
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'object') {
+      if (Array.isArray(v)) return v.map(formatValue);
+      const obj = {};
+      for (const [k, val] of Object.entries(v)) {
+        if (val !== null && val !== undefined) {
+          obj[k] = formatValue(val);
+        }
+      }
+      return obj;
+    }
+    return String(v).replace(/\\s+/g, ' ').trim();
+  };
+  const formatEvento = (evento) => {
+    if (!evento) return null;
+    const cols = ['idevento', 'nombreevento', 'fechaevento', 'horaevento', 'lugarevento', 'estado', 'idacademico'];
+    const result = {};
+    for (let i = 0; i < Math.min(cols.length, evento.length); i++) {
+      result[cols[i]] = formatValue(evento[i]);
+    }
+    return result;
+  };
+  return formatEvento(evento);
 };
 
 const minutosDelDia = (hora) => {
