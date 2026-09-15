@@ -2,6 +2,12 @@ const { getModels } = require('../models/index.js');
 const { Op,QueryTypes } = require('sequelize');
 const asyncHandler = require('express-async-handler');
 
+// Casteo SEGURO de columna texto (formato ISO) a timestamp.
+// Las columnas de fecha de la BD son character varying: esto evita que
+// valores NULL/vacíos o no-parseables rompan los queries.
+const safeDate = (col) =>
+  `CASE WHEN NULLIF(TRIM(${col}),'') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN NULLIF(TRIM(${col}),'')::timestamp END`;
+
 const getDashboardStats = asyncHandler(async (req, res) => {
   try {
     const models = getModels();
@@ -27,12 +33,12 @@ const getDashboardStats = asyncHandler(async (req, res) => {
       sequelize.query(`
         SELECT e.estado, COUNT(*) as total
         FROM evento e
-        INNER JOIN academico a ON e.idacademico = a.idacademico
-        INNER JOIN facultad f ON a.facultad_id = f.facultad_id
+        LEFT JOIN academico a ON e.idacademico = a.idacademico
+        LEFT JOIN facultad f ON a.facultad_id = f.facultad_id
         GROUP BY e.estado
 `, { type: sequelize.QueryTypes.SELECT }),
       sequelize.query(
-        `SELECT COUNT(*) as total FROM usuario WHERE "created_at" >= :inicioMes`,
+        `SELECT COUNT(*) as total FROM usuario WHERE ${safeDate('created_at')} >= :inicioMes`,
         { 
           replacements: { 
             inicioMes: new Date(new Date().getFullYear(), new Date().getMonth(), 1) 
@@ -55,12 +61,11 @@ const getDashboardStats = asyncHandler(async (req, res) => {
         LIMIT 10
 `, { type: sequelize.QueryTypes.SELECT }),
             sequelize.query(`
-        SELECT DATE("fecha_aprobacion") as fecha, COUNT(*) as total
-        FROM "evento"
-        WHERE "fecha_aprobacion" IS NOT NULL 
-          AND "fecha_aprobacion" != ''
-          AND "fecha_aprobacion"::DATE >= CURRENT_DATE - INTERVAL '6 days'
-        GROUP BY DATE("fecha_aprobacion") 
+        SELECT ${safeDate('fecha_aprobacion')}::date as fecha, COUNT(*) as total
+        FROM evento
+        WHERE ${safeDate('fecha_aprobacion')} IS NOT NULL
+          AND ${safeDate('fecha_aprobacion')}::date >= CURRENT_DATE - INTERVAL '6 days'
+        GROUP BY ${safeDate('fecha_aprobacion')}::date
         ORDER BY fecha ASC
       `, { type: sequelize.QueryTypes.SELECT })
     ]);
@@ -126,14 +131,14 @@ const getMensualStats = asyncHandler(async (req, res) => {
     
     const result = await sequelize.query(`
       SELECT 
-        TO_CHAR("fechaevento" ::DATE, 'YYYY-MM') AS mes, 
-        COUNT(*) FILTER (WHERE "estado" = 'aprobado')::INTEGER AS aprobado,
-        COUNT(*) FILTER (WHERE "estado" = 'pendiente')::INTEGER AS pendiente,
-        COUNT(*) FILTER (WHERE "estado" = 'rechazado')::INTEGER AS rechazado,
+        TO_CHAR(${safeDate('fechaevento')}, 'YYYY-MM') AS mes, 
+        COUNT(*) FILTER (WHERE estado = 'aprobado')::INTEGER AS aprobado,
+        COUNT(*) FILTER (WHERE estado = 'pendiente')::INTEGER AS pendiente,
+        COUNT(*) FILTER (WHERE estado = 'rechazado')::INTEGER AS rechazado,
         COUNT(*) AS total
-      FROM "evento"
-      WHERE "fechaevento" IS NOT NULL            
-      GROUP BY TO_CHAR("fechaevento" ::DATE, 'YYYY-MM') 
+      FROM evento
+      WHERE ${safeDate('fechaevento')} IS NOT NULL            
+      GROUP BY TO_CHAR(${safeDate('fechaevento')}, 'YYYY-MM')
       ORDER BY mes DESC
       LIMIT 24
     `, { type: sequelize.QueryTypes.SELECT });
@@ -163,15 +168,15 @@ const getHistoricalData = asyncHandler(async (req, res) => {
     
     const results = await sequelize.query(`
       SELECT 
-        TO_CHAR("fechaevento", 'YYYY-MM') as mes,
-        EXTRACT(MONTH FROM "fechaevento") as month_num,
-        EXTRACT(YEAR FROM "fechaevento") as year_num,
+        TO_CHAR(${safeDate('fechaevento')}, 'YYYY-MM') as mes,
+        EXTRACT(MONTH FROM ${safeDate('fechaevento')}) as month_num,
+        EXTRACT(YEAR FROM ${safeDate('fechaevento')}) as year_num,
         COUNT(*) as eventos
-      FROM "evento"
-      WHERE "fechaevento" >= CURRENT_DATE - INTERVAL '6 months'
-      GROUP BY TO_CHAR("fechaevento", 'YYYY-MM'), 
-               EXTRACT(MONTH FROM "fechaevento"),
-               EXTRACT(YEAR FROM "fechaevento")
+      FROM evento
+      WHERE ${safeDate('fechaevento')} >= CURRENT_DATE - INTERVAL '6 months'
+      GROUP BY TO_CHAR(${safeDate('fechaevento')}, 'YYYY-MM'), 
+               EXTRACT(MONTH FROM ${safeDate('fechaevento')}),
+               EXTRACT(YEAR FROM ${safeDate('fechaevento')})
       ORDER BY year_num ASC, month_num ASC
     `, { type: sequelize.QueryTypes.SELECT });
 

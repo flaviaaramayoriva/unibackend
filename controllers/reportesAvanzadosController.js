@@ -1,15 +1,21 @@
 const { getModels } = require('../models/index.js');
 
+// Casteo SEGURO de columna texto (formato ISO) a timestamp.
+// Las columnas de fecha de la BD son character varying: esto evita que
+// valores NULL/vacíos o no-parseables rompan los queries.
+const safeDate = (col) =>
+  `CASE WHEN NULLIF(TRIM(${col}),'') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN NULLIF(TRIM(${col}),'')::timestamp END`;
+
 // Construye fragmento SQL de filtro por fechas (opcional) usando fechaevento
 const filtroFecha = (q) => {
   const reemplazos = {};
   const condiciones = [];
   if (q.desde && /^\d{4}-\d{2}-\d{2}$/.test(q.desde)) {
-    condiciones.push('e.fechaevento::date >= :desde');
+    condiciones.push(`${safeDate('e.fechaevento')} >= :desde`);
     reemplazos.desde = q.desde;
   }
   if (q.hasta && /^\d{4}-\d{2}-\d{2}$/.test(q.hasta)) {
-    condiciones.push('e.fechaevento::date <= :hasta');
+    condiciones.push(`${safeDate('e.fechaevento')} <= :hasta`);
     reemplazos.hasta = q.hasta;
   }
   return { where: condiciones.length ? 'WHERE ' + condiciones.join(' AND ') : '', replacements: reemplazos };
@@ -54,7 +60,10 @@ const getReporteInscripciones = async (req, res) => {
     );
 
     const porMes = await sequelize.query(
-      `SELECT TO_CHAR(COALESCE(ei.fecha_inscripcion, e.fechaevento)::date, 'YYYY-MM') AS mes,
+      `SELECT TO_CHAR(COALESCE(
+         ${safeDate('ei.fecha_inscripcion')},
+         ${safeDate('e.fechaevento')}
+       ), 'YYYY-MM') AS mes,
               COUNT(*)::int AS inscritos
        FROM evento_inscripciones ei
        JOIN evento e ON e.idevento = ei.idevento
@@ -82,11 +91,14 @@ const getReporteOperacionales = async (req, res) => {
     const { where, replacements } = filtroFecha(req.query);
 
     const tiempoAprobacionPorMes = await sequelize.query(
-      `SELECT TO_CHAR(e.fecha_aprobacion::date, 'YYYY-MM') AS mes,
-              ROUND(AVG(EXTRACT(EPOCH FROM (e.fecha_aprobacion - e.created_at)) / 3600))::int AS horas
-       FROM evento e
-       WHERE e.fecha_aprobacion IS NOT NULL
-         AND e.created_at IS NOT NULL
+      `SELECT TO_CHAR(x.fa, 'YYYY-MM') AS mes,
+              ROUND(AVG(EXTRACT(EPOCH FROM (x.fa - x.ca)) / 3600))::int AS horas
+       FROM (
+         SELECT ${safeDate('e.fecha_aprobacion')} AS fa,
+                ${safeDate('e.created_at')}       AS ca
+         FROM evento e
+       ) x
+       WHERE x.fa IS NOT NULL AND x.ca IS NOT NULL
        GROUP BY 1
        ORDER BY 1 ASC`, { type: sequelize.QueryTypes.SELECT }
     );
@@ -175,7 +187,7 @@ const getReporteEconomicos = async (req, res) => {
     );
 
     const porMes = await sequelize.query(
-      `SELECT TO_CHAR(e.fechaevento::date, 'YYYY-MM') AS mes,
+      `SELECT TO_CHAR(${safeDate('e.fechaevento')}, 'YYYY-MM') AS mes,
               ROUND(SUM(ie.balance_real))::int AS balance,
               ROUND(SUM(ie.total_egresos_real))::int AS egresos,
               ROUND(SUM(ie.total_ingresos_real))::int AS ingresos,
@@ -227,7 +239,7 @@ const getReporteRecursos = async (req, res) => {
     // Si llegan fechas explícitas (desde/hasta), se usan en lugar de la ventana fija
     const { where, replacements } = filtroFecha(req.query);
     const condiciones = where ? where.replace(/^WHERE\s+/, '') : '';
-    const condFecha = condiciones || `e.fechaevento >= ${ini}`;
+    const condFecha = condiciones || `${safeDate('e.fechaevento')} >= ${ini}`;
 
     const [counts] = await sequelize.query(
       `SELECT
