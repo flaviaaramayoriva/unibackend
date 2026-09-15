@@ -411,17 +411,30 @@ const createEvento = async (req, res) => {
 const getAllEventos = async (req, res) => {
   const models = getModels();
   const sequelize = models.sequelize;
-  const {Evento, User,Fase} = models;
+  const {Evento, User, Fase} = models;
 
   const eventos = await Evento.findAll({
     order: [['fechaevento', 'ASC'], ['horaevento', 'ASC']],
     attributes: { exclude: ['organizerId', 'categoryId', 'locationId'] }
   });
 
+  const [tiposRaw] = await sequelize.query(
+    `SELECT et.idevento, te.nombretipo
+     FROM evento_tipos et
+     JOIN tipos_de_evento te ON te.idtipoevento = et.idtipoevento`,
+    { type: QueryTypes.SELECT }
+  );
+  const tiposPorEvento = {};
+  (tiposRaw || []).forEach(row => {
+    if (!tiposPorEvento[row.idevento]) tiposPorEvento[row.idevento] = [];
+    tiposPorEvento[row.idevento].push(row.nombretipo);
+  });
+
   const baseUrl = `${req.protocol}://${req.get('host')}/uploads/`;
   const eventosConUrl = eventos.map(evento => {
     const eventoData = evento.get({ plain: true });
     eventoData.imagenUrl = eventoData.imagen ? `${baseUrl}${eventoData.imagen}` : null;
+    eventoData.tipo_evento = (tiposPorEvento[eventoData.idevento] || []).join(', ');
     return eventoData;
   });
   res.status(200).json(eventosConUrl);

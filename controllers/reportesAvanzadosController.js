@@ -224,6 +224,11 @@ const getReporteRecursos = async (req, res) => {
     if (periodo === 'semana') ini = 'CURRENT_DATE - INTERVAL \'7 days\'';
     if (periodo === 'trimestre') ini = 'CURRENT_DATE - INTERVAL \'3 months\'';
 
+    // Si llegan fechas explícitas (desde/hasta), se usan en lugar de la ventana fija
+    const { where, replacements } = filtroFecha(req.query);
+    const condiciones = where ? where.replace(/^WHERE\s+/, '') : '';
+    const condFecha = condiciones || `e.fechaevento >= ${ini}`;
+
     const [counts] = await sequelize.query(
       `SELECT
         COUNT(*)::int AS totalSolicitudes,
@@ -234,8 +239,8 @@ const getReporteRecursos = async (req, res) => {
         COUNT(*) FILTER (WHERE COALESCE(e.estado,'') NOT IN ('aprobado','rechazado','cancelado','vencido'))::int AS pendientes
        FROM evento_recurso er
        JOIN evento e ON e.idevento = er.idevento
-       WHERE e.fechaevento >= ${ini}`,
-      { type: sequelize.QueryTypes.SELECT }
+       WHERE ${condFecha}`,
+      { replacements: replacements || undefined, type: sequelize.QueryTypes.SELECT }
     );
 
     const recursosMasUsados = await sequelize.query(
@@ -243,10 +248,10 @@ const getReporteRecursos = async (req, res) => {
        FROM evento_recurso er
        JOIN recurso r ON r.idrecurso = er.idrecurso
        JOIN evento e ON e.idevento = er.idevento
-       WHERE e.fechaevento >= ${ini}
+       WHERE ${condFecha}
        GROUP BY r.nombre_recurso
        ORDER BY usos DESC
-       LIMIT 10`, { type: sequelize.QueryTypes.SELECT }
+       LIMIT 10`, { replacements: replacements || undefined, type: sequelize.QueryTypes.SELECT }
     );
 
     const eventoRecientes = await sequelize.query(
@@ -261,10 +266,10 @@ const getReporteRecursos = async (req, res) => {
        LEFT JOIN evento_recurso er ON er.idevento = e.idevento
        LEFT JOIN academico a ON a.idacademico = e.idacademico
        LEFT JOIN usuario u ON u.idusuario = a.idusuario
-       WHERE e.fechaevento >= ${ini}
+       WHERE ${condFecha}
        GROUP BY e.idevento, e.nombreevento, e.lugarevento, e.fechaevento, u.nombre, u.apellidopat, e.estado
        ORDER BY e.fechaevento DESC
-       LIMIT 8`, { type: sequelize.QueryTypes.SELECT }
+       LIMIT 8`, { replacements: replacements || undefined, type: sequelize.QueryTypes.SELECT }
     );
 
     res.status(200).json({
@@ -290,13 +295,13 @@ const getReporteTipos = async (req, res) => {
     const { where, replacements } = filtroFecha(req.query);
 
     const porTipo = await sequelize.query(
-      `SELECT COALESCE(te.nombretipoevento, 'Sin tipo') AS tipo,
+      `SELECT COALESCE(te.nombretipo, 'Sin tipo') AS tipo,
               COUNT(et.idtipoevento)::int AS total
        FROM evento_tipos et
-       JOIN tipo_evento te ON te.idtipoevento = et.idtipoevento
+       JOIN tipos_de_evento te ON te.idtipoevento = et.idtipoevento
        JOIN evento e ON e.idevento = et.idevento
        ${where}
-       GROUP BY te.nombretipoevento
+       GROUP BY te.nombretipo
        ORDER BY total DESC
        LIMIT 12`, { replacements, type: sequelize.QueryTypes.SELECT }
     );

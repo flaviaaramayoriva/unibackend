@@ -1,3 +1,4 @@
+const PDFDocument = require('pdfkit');
 const {getModels} = require('../models/index.js');
 
 const estadisticas = async (req, res) => {
@@ -6,10 +7,10 @@ const estadisticas = async (req, res) => {
 
     const [totalEventos] = await sequelize.query('SELECT COUNT(*) as total FROM evento');
     const [eventosPorTipo] = await sequelize.query(`
-      SELECT te.nombretipoevento, COUNT(e.idevento) as cantidad
-      FROM evento e
-      JOIN tipo_evento te ON e.idtipoevento = te.idtipoevento
-      GROUP BY te.nombretipoevento
+      SELECT te.nombretipo, COUNT(et.idevento) as cantidad
+      FROM evento_tipos et
+      JOIN tipos_de_evento te ON et.idtipoevento = te.idtipoevento
+      GROUP BY te.nombretipo
       ORDER BY cantidad DESC
     `);
     const [proximosEventos] = await sequelize.query(`
@@ -31,7 +32,7 @@ const estadisticas = async (req, res) => {
     doc.moveDown();
     doc.fontSize(16).font('Helvetica-Bold').text('Distribución de Eventos por Tipo');
     eventosPorTipo.forEach(tipo => {
-      doc.fontSize(12).font('Helvetica').text(`- ${tipo.nombretipoevento}: ${tipo.cantidad} evento(s)`);
+      doc.fontSize(12).font('Helvetica').text(`- ${tipo.nombretipo}: ${tipo.cantidad} evento(s)`);
     });
     doc.moveDown();
     doc.fontSize(16).font('Helvetica-Bold').text('Próximos 5 Eventos');
