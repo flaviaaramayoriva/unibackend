@@ -101,34 +101,58 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
       });
     }
 
-    // Verificar que la clave de API esté disponible
-    if (!process.env.GEMINI_API_KEY) {
-      console.error('❌ GEMINI_API_KEY no definida en las variables de entorno');
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.error('❌ GEMINI_API_KEY no definida');
       return res.status(500).json({ 
         success: false, 
         message: 'Error de configuración: clave de IA no disponible' 
       });
     }
 
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+    // Usar la API directamente con fetch (funciona con claves AQ... y AIzaSy...)
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{
+          parts: [{
+            text: `Genera un código SVG de un plano de layout para un evento universitario. El layout debe ser un plano simple con áreas para mesas y circulación. Incluye una descripción textual breve. Prompt: "${prompt}". Responde SOLO con el código SVG válido y nada más, sin explicaciones ni texto adicional.`
+          }]
+        }]
+      }),
+    });
 
-    const result = await model.generateContent(`
-      Genera un código SVG de un plano de layout para un evento universitario. 
-      El layout debe ser un plano simple con áreas para mesas y circulación.
-      Incluye una descripción textual breve. 
-      Prompt: "${prompt}"
-      Responde SOLO con el código SVG válido y nada más, sin explicaciones ni texto adicional.
-    `);
-
-    const rawText = result.response?.text() || '';
-    const svgCode = rawText.trim();
-
-    if (!svgCode.startsWith('<svg')) {
-      console.error('❌ Gemini no devolvió SVG válido:', rawText.substring(0, 200));
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Error API Gemini:', response.status, errorText);
       return res.status(500).json({ 
         success: false, 
-        message: 'No se generó un SVG válido. Revisa la consola del servidor para más detalles.' 
+        message: 'Error al comunicarse con la IA. Revisa la consola del servidor.' 
+      });
+    }
+
+    const data = await response.json();
+    
+    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
+      console.error('❌ Respuesta inesperada de Gemini:', data);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Respuesta inesperada de la IA' 
+      });
+    }
+
+    const svgCode = data.candidates[0].content.parts[0].text.trim();
+
+    if (!svgCode.startsWith('<svg')) {
+      console.error('❌ No se generó SVG válido:', svgCode.substring(0, 200));
+      return res.status(500).json({ 
+        success: false, 
+        message: 'No se generó un SVG válido' 
       });
     }
 
