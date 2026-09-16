@@ -1,3 +1,4 @@
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { getModels } = require('../models/index.js');
 const asyncHandler = require('express-async-handler');
 const fs = require('fs');
@@ -87,6 +88,65 @@ const obtenerLayouts = asyncHandler(async (req, res) => {
   });
 
   res.json(layoutsConUrlCompleta);
+});
+
+const generarLayoutIA = asyncHandler(async (req, res) => {
+  try {
+    const { prompt } = req.body;
+
+    if (!prompt?.trim()) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'El prompt es requerido' 
+      });
+    }
+
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+
+    const result = await model.generateContent(`
+      Genera un código SVG de un plano de layout para un evento universitario. 
+      El layout debe ser un plano simple con áreas para mesas y circulación.
+      Incluye una descripción textual breve. 
+      Prompt: "${prompt}"
+      Responde SOLO con el código SVG válido y nada más, sin explicaciones ni texto adicional.
+    `);
+
+    const svgCode = result.response.text().trim();
+
+    if (!svgCode.startsWith('<svg')) {
+      return res.status(500).json({ 
+        success: false, 
+        message: 'No se generó un SVG válido' 
+      });
+    }
+
+    const models = getModels();
+    const { Layout } = models;
+
+    const nuevoLayout = await Layout.create({
+      nombre: `Layout IA - ${prompt.substring(0, 30).trim()}`,
+      url_imagen: `data:image/svg+xml;base64,${Buffer.from(svgCode).toString('base64')}`
+    });
+
+    res.status(201).json({ 
+      success: true, 
+      message: 'Layout generado con IA exitosamente',
+      layout: {
+        id: nuevoLayout.idlayout,
+        nombre: nuevoLayout.nombre,
+        url_imagen: nuevoLayout.url_imagen,
+        imagenUrl: `${req.protocol}://${req.get('host')}/uploads/${nuevoLayout.url_imagen}`
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error al generar layout con IA:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error interno al generar layout con IA' 
+    });
+  }
 });
 
 const eliminarLayout = asyncHandler(async (req, res) => {
