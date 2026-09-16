@@ -1,17 +1,19 @@
-﻿const { getModels } = require('../models/index.js');
+const { getModels } = require('../models/index.js');
 
 // Casteo SEGURO de columna texto (formato ISO) a timestamp.
 // Las columnas de fecha de la BD son character varying: esto evita que
-// valores NULL/vacíos o no-parseables rompan los queries.
+// valores NULL/vac�os o no-parseables rompan los queries.
 const safeDate = (col) =>
   `CASE WHEN NULLIF(TRIM(${col}),'') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN NULLIF(TRIM(${col}),'')::timestamp END`;
 
 // Construye fragmentos SQL de filtro opcionales sobre la tabla `evento e`:
-// • rango de fechas (desde/hasta -> fechaevento)
-// • facultad del creador (facultad_id -> academico de origen)
-// • tipo de evento (tipo -> evento_tipos)
-// Devuelve { where, replacements }; `where` empieza con WHERE o está vacío.
-const filtros = (q) => {
+// � rango de fechas (desde/hasta -> fechaevento)
+// � facultad del creador (facultad_id -> academico de origen)
+// � tipo de evento (tipo -> evento_tipos)
+// � usuario logueado: los acad�micos solo ven sus propios eventos; admin/DAF
+//   pueden adem�s filtrar por un idacademico concreto (q.idacademico).
+// Devuelve { where, replacements }; `where` empieza con WHERE o est� vac�o.
+const filtros = async (q, user) => {
   const reemplazos = {};
   const condiciones = [];
   if (q.desde && /^\d{4}-\d{2}-\d{2}$/.test(q.desde)) {
@@ -21,6 +23,25 @@ const filtros = (q) => {
   if (q.hasta && /^\d{4}-\d{2}-\d{2}$/.test(q.hasta)) {
     condiciones.push(`${safeDate('e.fechaevento')} <= :hasta`);
     reemplazos.hasta = q.hasta;
+  }
+  // Alcance por creador seg�n rol
+  if (user) {
+    if (user.role === 'academico') {
+      const { Academico } = getModels();
+      const acad = await Academico.findOne({ where: { idusuario: user.idusuario }, attributes: ['idacademico'] });
+      if (acad) {
+        condiciones.push('e.idacademico = :idacademico');
+        reemplazos.idacademico = acad.idacademico;
+      } else {
+        condiciones.push('1 = 0'); // perfil acad�mico inexistente: sin datos
+      }
+    } else {
+      const ac = parseInt(q.idacademico, 10);
+      if (ac) {
+        condiciones.push('e.idacademico = :idacademico');
+        reemplazos.idacademico = ac;
+      }
+    }
   }
   const fac = parseInt(q.facultad_id, 10);
   if (fac) {
@@ -40,11 +61,36 @@ const filtros = (q) => {
   return { where: condiciones.length ? 'WHERE ' + condiciones.join(' AND ') : '', replacements: reemplazos };
 };
 
-// ─── Inscripciones ─────────────────────────────────────────────────────────────
+// Cat�logo de acad�micos para el selector de admin/DAF ("Ver reportes de...").
+const getReporteAcademicos = async (req, res) => {
+  try {
+    const { sequelize } = getModels();
+    const rows = await sequelize.query(
+      `SELECT a.idacademico,
+              CONCAT(COALESCE(u.nombre, 'Docente'), ' ', COALESCE(u.apellidopat, ''), ' ', COALESCE(u.apellidomat, '')) AS nombre,
+              COALESCE(f.nombre_facultad, 'Sin facultad') AS facultad
+       FROM academico a
+       JOIN usuario u ON u.idusuario = a.idusuario
+       LEFT JOIN facultad f ON f.facultad_id = a.facultad_id
+       ORDER BY u.nombre ASC, u.apellidopat ASC`,
+      { type: sequelize.QueryTypes.SELECT }
+    );
+    res.status(200).json(rows.map(r => ({
+      idacademico: r.idacademico,
+      nombre: r.nombre,
+      facultad: r.facultad,
+    })));
+  } catch (err) {
+    console.error('? Error getReporteAcademicos:', err.message);
+    res.status(500).json({ error: 'Error al obtener acad�micos', message: err.message });
+  }
+};
+
+// --- Inscripciones -------------------------------------------------------------
 const getReporteInscripciones = async (req, res) => {
   try {
     const { sequelize } = getModels();
-    const { where, replacements } = filtros(req.query);
+    const { where, replacements } = await filtros(req.query, req.user);
 
     const [totalRow] = await sequelize.query(
       `SELECT COUNT(*)::int AS total
@@ -98,16 +144,16 @@ const getReporteInscripciones = async (req, res) => {
       porMes,
     });
   } catch (err) {
-    console.error('❌ Error getReporteInscripciones:', err.message);
+    console.error('? Error getReporteInscripciones:', err.message);
     res.status(500).json({ error: 'Error al generar reporte de inscripciones', message: err.message });
   }
 };
 
-// ─── Operacionales (tiempos, funnel, estados) ──────────────────────────────────
+// --- Operacionales (tiempos, funnel, estados) ----------------------------------
 const getReporteOperacionales = async (req, res) => {
   try {
     const { sequelize } = getModels();
-    const { where, replacements } = filtros(req.query);
+    const { where, replacements } = await filtros(req.query, req.user);
 
     const tiempoAprobacionPorMes = await sequelize.query(
       `SELECT TO_CHAR(x.fa, 'YYYY-MM') AS mes,
@@ -155,16 +201,16 @@ const getReporteOperacionales = async (req, res) => {
       noAprobados,
     });
   } catch (err) {
-    console.error('❌ Error getReporteOperacionales:', err.message);
+    console.error('? Error getReporteOperacionales:', err.message);
     res.status(500).json({ error: 'Error al generar reporte operacional', message: err.message });
   }
 };
 
-// ─── Económicos (presupuesto vs real) ──────────────────────────────────────────
+// --- Econ�micos (presupuesto vs real) ------------------------------------------
 const getReporteEconomicos = async (req, res) => {
   try {
     const { sequelize } = getModels();
-    const { where, replacements } = filtros(req.query);
+    const { where, replacements } = await filtros(req.query, req.user);
 
     // Presupuesto planificado es global (no depende de fechas del evento)
     const [pres] = await sequelize.query(
@@ -174,7 +220,7 @@ const getReporteEconomicos = async (req, res) => {
       { type: sequelize.QueryTypes.SELECT }
     );
 
-    // Ejecución real filtrada por fechas del evento
+    // Ejecuci�n real filtrada por fechas del evento
     const [real] = await sequelize.query(
       `SELECT COALESCE(SUM(ie.total_egresos_real), 0)  AS egresos,
               COALESCE(SUM(ie.total_ingresos_real), 0) AS ingresos,
@@ -242,12 +288,12 @@ const getReporteEconomicos = async (req, res) => {
       porEvento,
     });
   } catch (err) {
-    console.error('❌ Error getReporteEconomicos:', err.message);
-    res.status(500).json({ error: 'Error al generar reporte económico', message: err.message });
+    console.error('? Error getReporteEconomicos:', err.message);
+    res.status(500).json({ error: 'Error al generar reporte econ�mico', message: err.message });
   }
 };
 
-// ─── Recursos (más usados + conteo de solicitudes) ─────────────────────────────
+// --- Recursos (m�s usados + conteo de solicitudes) -----------------------------
 const getReporteRecursos = async (req, res) => {
   try {
     const { sequelize } = getModels();
@@ -257,8 +303,8 @@ const getReporteRecursos = async (req, res) => {
     if (periodo === 'semana') ini = 'CURRENT_DATE - INTERVAL \'7 days\'';
     if (periodo === 'trimestre') ini = 'CURRENT_DATE - INTERVAL \'3 months\'';
 
-    // Si llegan fechas explícitas (desde/hasta), se usan en lugar de la ventana fija
-    const { where, replacements } = filtros(req.query);
+    // Si llegan fechas expl�citas (desde/hasta), se usan en lugar de la ventana fija
+    const { where, replacements } = await filtros(req.query, req.user);
     const condiciones = where ? where.replace(/^WHERE\s+/, '') : '';
     const condFecha = condiciones || `${safeDate('e.fechaevento')} >= ${ini}`;
 
@@ -316,16 +362,16 @@ const getReporteRecursos = async (req, res) => {
       eventoRecientes,
     });
   } catch (err) {
-    console.error('❌ Error getReporteRecursos:', err.message);
+    console.error('? Error getReporteRecursos:', err.message);
     res.status(500).json({ error: 'Error al generar reporte de recursos', message: err.message });
   }
 };
 
-// ─── Distribución por tipo de evento ───────────────────────────────────────────
+// --- Distribuci�n por tipo de evento -------------------------------------------
 const getReporteTipos = async (req, res) => {
   try {
     const { sequelize } = getModels();
-    const { where, replacements } = filtros(req.query);
+    const { where, replacements } = await filtros(req.query, req.user);
 
     const porTipo = await sequelize.query(
       `SELECT te.idtipoevento, COALESCE(te.nombretipo, 'Sin tipo') AS tipo,
@@ -339,10 +385,45 @@ const getReporteTipos = async (req, res) => {
        LIMIT 12`, { replacements, type: sequelize.QueryTypes.SELECT }
     );
 
-    res.status(200).json({ porTipo });
+res.status(200).json({ porTipo });
   } catch (err) {
-    console.error('❌ Error getReporteTipos:', err.message);
-    res.status(500).json({ error: 'Error al generar distribución por tipo', message: err.message });
+    console.error('? Error getReporteTipos:', err.message);
+    res.status(500).json({ error: 'Error al generar distribuci�n por tipo', message: err.message });
+  }
+};
+
+// ─── Mensual (tendencia) con alcance y filtros del área de reportes ────────────
+const getReporteMensual = async (req, res) => {
+  try {
+    const { sequelize } = getModels();
+    const { where, replacements } = await filtros(req.query, req.user);
+    const condFecha = `${safeDate('e.fechaevento')} IS NOT NULL`;
+    const result = await sequelize.query(
+      `SELECT
+         TO_CHAR(${safeDate('e.fechaevento')}, 'YYYY-MM') AS mes,
+         COUNT(*) FILTER (WHERE e.estado = 'aprobado')::int AS aprobado,
+         COUNT(*) FILTER (WHERE e.estado = 'pendiente')::int AS pendiente,
+         COUNT(*) FILTER (WHERE e.estado = 'rechazado')::int AS rechazado,
+         COUNT(*)::int AS total
+       FROM evento e
+       ${where ? `${where} AND ${condFecha}` : `WHERE ${condFecha}`}
+       GROUP BY 1
+       ORDER BY 1 DESC
+       LIMIT 24`,
+      { replacements: replacements || undefined, type: sequelize.QueryTypes.SELECT }
+    );
+    const reportes = result.map(row => ({
+      mes: row.mes,
+      totalEvents: parseInt(row.total),
+      aprobado: row.aprobado,
+      pendiente: row.pendiente,
+      rechazado: row.rechazado,
+      tasaAprobacion: row.total > 0 ? parseFloat(((row.aprobado / row.total) * 100).toFixed(1)) : 0,
+    }));
+    res.status(200).json(reportes);
+  } catch (err) {
+    console.error('? Error getReporteMensual:', err.message);
+    res.status(500).json({ error: 'Error al obtener datos mensuales', message: err.message });
   }
 };
 
@@ -350,10 +431,10 @@ const getReporteTipos = async (req, res) => {
 const getReporteGestion = async (req, res) => {
   try {
     const { sequelize } = getModels();
-    const { where, replacements } = filtros(req.query);
+    const { where, replacements } = await filtros(req.query, req.user);
     const rr = replacements || undefined;
 
-    // 1. Totales y tiempo promedio de aprobación (días)
+    // 1. Totales y tiempo promedio de aprobaci�n (d�as)
     const [agg] = await sequelize.query(`
       SELECT
         COUNT(*)::int AS totalEventos,
@@ -389,7 +470,7 @@ const getReporteGestion = async (req, res) => {
       ${where}`, { replacements: rr, type: sequelize.QueryTypes.SELECT }
     );
 
-    // 4. Ejecución presupuestaria (presupuesto planificado vs real)
+    // 4. Ejecuci�n presupuestaria (presupuesto planificado vs real)
     const [eje] = await sequelize.query(`
       SELECT COALESCE(SUM(p.total_egresos), 0)  AS pres_egresos,
              COALESCE(SUM(p.total_ingresos), 0) AS pres_ingresos,
@@ -402,7 +483,7 @@ const getReporteGestion = async (req, res) => {
       ${where}`, { replacements: rr, type: sequelize.QueryTypes.SELECT }
     );
 
-    // 5. Aceptación por facultad
+    // 5. Aceptaci�n por facultad
     const aceptacionPorFacultad = await sequelize.query(`
       SELECT COALESCE(f.nombre_facultad, 'Sin facultad') AS facultad,
              COUNT(*)::int AS total,
@@ -445,7 +526,7 @@ const getReporteGestion = async (req, res) => {
       ORDER BY e.fechaevento DESC`, { replacements: rr, type: sequelize.QueryTypes.SELECT }
     );
 
-    // 8. Ejecución presupuestaria por evento (para columnas de la tabla)
+    // 8. Ejecuci�n presupuestaria por evento (para columnas de la tabla)
     const ejecucionPorEvento = await sequelize.query(`
       SELECT e.idevento,
              COALESCE(p.total_egresos, 0)  AS pres_egresos,
@@ -508,8 +589,8 @@ const getReporteGestion = async (req, res) => {
       })),
     });
   } catch (err) {
-    console.error('❌ Error getReporteGestion:', err.message);
-    res.status(500).json({ error: 'Error al generar reporte de gestión', message: err.message });
+    console.error('? Error getReporteGestion:', err.message);
+    res.status(500).json({ error: 'Error al generar reporte de gesti�n', message: err.message });
   }
 };
 
@@ -520,4 +601,6 @@ module.exports = {
   getReporteRecursos,
   getReporteTipos,
   getReporteGestion,
+  getReporteAcademicos,
+  getReporteMensual,
 };

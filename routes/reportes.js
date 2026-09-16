@@ -8,11 +8,15 @@ const {
   getReporteRecursos,
   getReporteTipos,
   getReporteGestion,
+  getReporteAcademicos,
+  getReporteMensual,
 } = require('../controllers/reportesAvanzadosController.js');
 const { protect } = require('../middleware/authMiddleware.js');
 
 router.get('/reporte/estadisticas', protect, estadisticas);
 router.get('/', protect, getReporteRecursos);
+router.get('/academicos', protect, getReporteAcademicos);
+router.get('/mensual', protect, getReporteMensual);
 router.get('/inscripciones', protect, getReporteInscripciones);
 router.get('/operacionales', protect, getReporteOperacionales);
 router.get('/economicos', protect, getReporteEconomicos);

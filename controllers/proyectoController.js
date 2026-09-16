@@ -418,7 +418,7 @@ const getAllEventos = async (req, res) => {
     attributes: { exclude: ['organizerId', 'categoryId', 'locationId'] }
   });
 
-  const [tiposRaw] = await sequelize.query(
+  const tiposRaw = await sequelize.query(
     `SELECT et.idevento, te.nombretipo
      FROM evento_tipos et
      JOIN tipos_de_evento te ON te.idtipoevento = et.idtipoevento`,
