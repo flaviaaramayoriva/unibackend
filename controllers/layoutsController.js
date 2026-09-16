@@ -110,12 +110,57 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
       });
     }
 
-    // Usar la API directamente con fetch (funciona con claves AQ... y AIzaSy...)
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent?key=${apiKey}`;
+    // Probar primero ListModels para ver qué modelos están disponibles
+    const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
     
-    const response = await fetch(url, {
+    const listResponse = await fetch(listUrl, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!listResponse.ok) {
+      const listError = await listResponse.text();
+      console.error('❌ Error al listar modelos:', listResponse.status, listError);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Error al comunicarse con la IA' 
+      });
+    }
+
+    const listData = await listResponse.json();
+    const availableModels = listData.models || [];
+    console.log('🔍 Modelos disponibles:', availableModels.map(m => m.name));
+    
+    // Encontrar el primer modelo que soporte generateContent
+    let targetModel = null;
+    for (const model of availableModels) {
+      if (model.name && model.name.includes('generateContent')) {
+        targetModel = model.name;
+        break;
+      }
+    }
+
+    // Si no encontramos un modelo con generateContent, usar el primero disponible
+    if (!targetModel && availableModels.length > 0) {
+      targetModel = availableModels[0].name;
+    }
+
+    if (!targetModel) {
+      return res.status(500).json({ 
+        success: false, 
+        message: 'No se encontraron modelos disponibles' 
+      });
+    }
+
+    // Usar el modelo encontrado con la llamada de generateContent
+    const modelUrl = `https://generativelanguage.googleapis.com/v1beta/${targetModel}:generateContent?key=${apiKey}`;
+    
+    const response = await fetch(modelUrl, {
       method: 'POST',
       headers: {
+        'X-goog-api-key': apiKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
