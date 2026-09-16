@@ -73,7 +73,19 @@ app.use('/uploads', (req, res, next) => {
   console.log('📁 Solicitud de archivo:', req.url);
   next();
 });
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Servir archivos estáticos con headers adecuados
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.svg')) {
+      res.set('Content-Type', 'image/svg+xml');
+      res.set('Cache-Control', 'public, max-age=86400');
+    }
+    if (filePath.endsWith('.jpg') || filePath.endsWith('.png') || filePath.endsWith('.webp')) {
+      res.set('Cache-Control', 'public, max-age=86400');
+    }
+  }
+}));
 
 if (frontendExists) {
   app.get('/', (req, res) => res.sendFile(path.join(FRONTEND_PATH, 'index.html')));
