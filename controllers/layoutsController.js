@@ -115,18 +115,20 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
     const layoutsDir = path.join(__dirname, '..', 'uploads', 'layouts');
     if (!fs.existsSync(layoutsDir)) fs.mkdirSync(layoutsDir, { recursive: true });
 
-    const filename = `layout-ia-${Date.now()}-${Math.round(Math.random() * 1E9)}.svg`;
-    const filePath = path.join(layoutsDir, filename);
+    const filename = `layout.svg`;
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
+    const filePath = path.join(layoutsDir, `${uniqueSuffix}-${filename}`);
     const svgContent = `<?xml version="1.0" encoding="UTF-8"?>${svgCode}`;
     fs.writeFileSync(filePath, svgContent);
 
     const models = getModels();
     const { Layout } = models;
 
-    const urlImagen = `/uploads/${filename}`;
+    const dbFileName = `${uniqueSuffix}-${filename}`;
+    const urlImagen = `/uploads/${dbFileName}`;
     const nuevoLayout = await Layout.create({
       nombre: `Layout IA - ${prompt.substring(0, 30).trim()}`,
-      url_imagen: filename
+      url_imagen: dbFileName
     });
 
     res.status(201).json({ 
