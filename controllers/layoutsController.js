@@ -111,7 +111,7 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
     }
 
     // Usar la API directamente con fetch (funciona con claves AQ... y AIzaSy...)
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent?key=${apiKey}`;
     
     const response = await fetch(url, {
       method: 'POST',
