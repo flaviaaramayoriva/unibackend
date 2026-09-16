@@ -101,6 +101,15 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
       });
     }
 
+    // Verificar que la clave de API esté disponible
+    if (!process.env.GEMINI_API_KEY) {
+      console.error('❌ GEMINI_API_KEY no definida en las variables de entorno');
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Error de configuración: clave de IA no disponible' 
+      });
+    }
+
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
@@ -112,12 +121,14 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
       Responde SOLO con el código SVG válido y nada más, sin explicaciones ni texto adicional.
     `);
 
-    const svgCode = result.response.text().trim();
+    const rawText = result.response?.text() || '';
+    const svgCode = rawText.trim();
 
     if (!svgCode.startsWith('<svg')) {
+      console.error('❌ Gemini no devolvió SVG válido:', rawText.substring(0, 200));
       return res.status(500).json({ 
         success: false, 
-        message: 'No se generó un SVG válido' 
+        message: 'No se generó un SVG válido. Revisa la consola del servidor para más detalles.' 
       });
     }
 
