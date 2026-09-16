@@ -443,7 +443,7 @@ const getReporteGestion = async (req, res) => {
         COUNT(*) FILTER (WHERE e.estado = 'rechazado')::int AS rechazados,
         ROUND(COALESCE(AVG(EXTRACT(EPOCH FROM (
           ${safeDate('e.fecha_aprobacion')} - ${safeDate('e.created_at')}
-        )) / 86400), 1) AS diasPromedioAprobacion
+        )) / 86400), 1)) AS diasPromedioAprobacion
       FROM evento e
       ${where}`, { replacements: rr, type: sequelize.QueryTypes.SELECT }
     );
