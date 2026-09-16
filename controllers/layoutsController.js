@@ -110,12 +110,23 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
       });
     }
 
+    const fs = require('fs');
+    const path = require('path');
+    const layoutsDir = path.join(__dirname, '..', 'uploads', 'layouts');
+    if (!fs.existsSync(layoutsDir)) fs.mkdirSync(layoutsDir, { recursive: true });
+
+    const filename = `layout-ia-${Date.now()}-${Math.round(Math.random() * 1E9)}.svg`;
+    const filePath = path.join(layoutsDir, filename);
+    const svgContent = `<?xml version="1.0" encoding="UTF-8"?>${svgCode}`;
+    fs.writeFileSync(filePath, svgContent);
+
     const models = getModels();
     const { Layout } = models;
 
+    const urlImagen = `/uploads/${filename}`;
     const nuevoLayout = await Layout.create({
-      nombre: `Layout - ${prompt.substring(0, 30).trim()}`,
-      url_imagen: `data:image/svg+xml;base64,${Buffer.from(svgCode).toString('base64')}`
+      nombre: `Layout IA - ${prompt.substring(0, 30).trim()}`,
+      url_imagen: filename
     });
 
     res.status(201).json({ 
@@ -125,7 +136,7 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
         id: nuevoLayout.idlayout,
         nombre: nuevoLayout.nombre,
         url_imagen: nuevoLayout.url_imagen,
-        imagenUrl: `${req.protocol}://${req.get('host')}/uploads/${nuevoLayout.url_imagen}`
+        imagenUrl: `${req.protocol}://${req.get('host')}${urlImagen}`
       }
     });
 
@@ -165,7 +176,7 @@ function generarSVGLayout(prompt) {
     for (let i = 0; i < mesaCount; i++) {
         const x = startX + (i % 2) * (tableWidth + 20);
         const y = startY + Math.floor(i / 2) * (tableDepth + 20);
-        svg += `<rect x="${x}" y="${y}" width="${tableWidth}" depth="${tableDepth}" fill="#1f2937"/>`;
+        svg += `<rect x="${x}" y="${y}" width="${tableWidth}" height="${tableDepth}" fill="#1f2937"/>`;
     }
     
     svg += '</svg>';
