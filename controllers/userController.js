@@ -7,7 +7,7 @@ const  jwt = require('jsonwebtoken');
 
 const createUser = asyncHandler(async (req, res) => {
   const models = getModels();
-  const {User,Academico,Estudiante,Docente} = models;
+  const {User,Academico,Estudiante,Docente,Daf} = models;
   const {
     username,
     nombre,
@@ -96,6 +96,11 @@ const createUser = asyncHandler(async (req, res) => {
         idcarrera: cid,
       });
     }
+  } else if (role === 'daf') {
+    await Daf.create({
+      idusuario: newUser.idusuario,
+      nivelAcceso: 6,
+    });
   }
 
   res.status(201).json({

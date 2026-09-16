@@ -1,4 +1,4 @@
-const { getModels } = require('../models/index.js');
+﻿const { getModels } = require('../models/index.js');
 
 // Casteo SEGURO de columna texto (formato ISO) a timestamp.
 // Las columnas de fecha de la BD son character varying: esto evita que
@@ -6,8 +6,12 @@ const { getModels } = require('../models/index.js');
 const safeDate = (col) =>
   `CASE WHEN NULLIF(TRIM(${col}),'') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}' THEN NULLIF(TRIM(${col}),'')::timestamp END`;
 
-// Construye fragmento SQL de filtro por fechas (opcional) usando fechaevento
-const filtroFecha = (q) => {
+// Construye fragmentos SQL de filtro opcionales sobre la tabla `evento e`:
+// • rango de fechas (desde/hasta -> fechaevento)
+// • facultad del creador (facultad_id -> academico de origen)
+// • tipo de evento (tipo -> evento_tipos)
+// Devuelve { where, replacements }; `where` empieza con WHERE o está vacío.
+const filtros = (q) => {
   const reemplazos = {};
   const condiciones = [];
   if (q.desde && /^\d{4}-\d{2}-\d{2}$/.test(q.desde)) {
@@ -18,6 +22,21 @@ const filtroFecha = (q) => {
     condiciones.push(`${safeDate('e.fechaevento')} <= :hasta`);
     reemplazos.hasta = q.hasta;
   }
+  const fac = parseInt(q.facultad_id, 10);
+  if (fac) {
+    condiciones.push(
+      `EXISTS (SELECT 1 FROM academico af JOIN facultad ff ON ff.facultad_id = af.facultad_id ` +
+      `WHERE af.idacademico = e.idacademico AND ff.facultad_id = :facultad_id)`
+    );
+    reemplazos.facultad_id = fac;
+  }
+  const tipo = parseInt(q.tipo, 10);
+  if (tipo) {
+    condiciones.push(
+      `EXISTS (SELECT 1 FROM evento_tipos etj WHERE etj.idevento = e.idevento AND etj.idtipoevento = :tipo)`
+    );
+    reemplazos.tipo = tipo;
+  }
   return { where: condiciones.length ? 'WHERE ' + condiciones.join(' AND ') : '', replacements: reemplazos };
 };
 
@@ -25,7 +44,7 @@ const filtroFecha = (q) => {
 const getReporteInscripciones = async (req, res) => {
   try {
     const { sequelize } = getModels();
-    const { where, replacements } = filtroFecha(req.query);
+    const { where, replacements } = filtros(req.query);
 
     const [totalRow] = await sequelize.query(
       `SELECT COUNT(*)::int AS total
@@ -88,7 +107,7 @@ const getReporteInscripciones = async (req, res) => {
 const getReporteOperacionales = async (req, res) => {
   try {
     const { sequelize } = getModels();
-    const { where, replacements } = filtroFecha(req.query);
+    const { where, replacements } = filtros(req.query);
 
     const tiempoAprobacionPorMes = await sequelize.query(
       `SELECT TO_CHAR(x.fa, 'YYYY-MM') AS mes,
@@ -97,10 +116,11 @@ const getReporteOperacionales = async (req, res) => {
          SELECT ${safeDate('e.fecha_aprobacion')} AS fa,
                 ${safeDate('e.created_at')}       AS ca
          FROM evento e
+         ${where}
        ) x
        WHERE x.fa IS NOT NULL AND x.ca IS NOT NULL
        GROUP BY 1
-       ORDER BY 1 ASC`, { type: sequelize.QueryTypes.SELECT }
+       ORDER BY 1 ASC`, { replacements: replacements || undefined, type: sequelize.QueryTypes.SELECT }
     );
 
     const porEstado = await sequelize.query(
@@ -119,12 +139,13 @@ const getReporteOperacionales = async (req, res) => {
        ORDER BY 1 ASC`, { replacements, type: sequelize.QueryTypes.SELECT }
     );
 
+    const condNoAp = `e.estado IN ('cancelado', 'vencido', 'rechazado')`;
     const noAprobados = await sequelize.query(
       `SELECT COALESCE(e.estado, 'sin_estado') AS estado, COUNT(*)::int AS total
        FROM evento e
-       WHERE e.estado IN ('cancelado', 'vencido', 'rechazado')
+       ${where ? `${where} AND ${condNoAp}` : `WHERE ${condNoAp}`}
        GROUP BY 1
-       ORDER BY total DESC`, { type: sequelize.QueryTypes.SELECT }
+       ORDER BY total DESC`, { replacements: replacements || undefined, type: sequelize.QueryTypes.SELECT }
     );
 
     res.status(200).json({
@@ -143,7 +164,7 @@ const getReporteOperacionales = async (req, res) => {
 const getReporteEconomicos = async (req, res) => {
   try {
     const { sequelize } = getModels();
-    const { where, replacements } = filtroFecha(req.query);
+    const { where, replacements } = filtros(req.query);
 
     // Presupuesto planificado es global (no depende de fechas del evento)
     const [pres] = await sequelize.query(
@@ -237,7 +258,7 @@ const getReporteRecursos = async (req, res) => {
     if (periodo === 'trimestre') ini = 'CURRENT_DATE - INTERVAL \'3 months\'';
 
     // Si llegan fechas explícitas (desde/hasta), se usan en lugar de la ventana fija
-    const { where, replacements } = filtroFecha(req.query);
+    const { where, replacements } = filtros(req.query);
     const condiciones = where ? where.replace(/^WHERE\s+/, '') : '';
     const condFecha = condiciones || `${safeDate('e.fechaevento')} >= ${ini}`;
 
@@ -304,16 +325,16 @@ const getReporteRecursos = async (req, res) => {
 const getReporteTipos = async (req, res) => {
   try {
     const { sequelize } = getModels();
-    const { where, replacements } = filtroFecha(req.query);
+    const { where, replacements } = filtros(req.query);
 
     const porTipo = await sequelize.query(
-      `SELECT COALESCE(te.nombretipo, 'Sin tipo') AS tipo,
+      `SELECT te.idtipoevento, COALESCE(te.nombretipo, 'Sin tipo') AS tipo,
               COUNT(et.idtipoevento)::int AS total
        FROM evento_tipos et
        JOIN tipos_de_evento te ON te.idtipoevento = et.idtipoevento
        JOIN evento e ON e.idevento = et.idevento
        ${where}
-       GROUP BY te.nombretipo
+       GROUP BY te.idtipoevento, te.nombretipo
        ORDER BY total DESC
        LIMIT 12`, { replacements, type: sequelize.QueryTypes.SELECT }
     );
@@ -325,10 +346,178 @@ const getReporteTipos = async (req, res) => {
   }
 };
 
+// ─── Gestión (KPIs de calidad: tiempos, asistencia, presupuesto, solicitantes) ─
+const getReporteGestion = async (req, res) => {
+  try {
+    const { sequelize } = getModels();
+    const { where, replacements } = filtros(req.query);
+    const rr = replacements || undefined;
+
+    // 1. Totales y tiempo promedio de aprobación (días)
+    const [agg] = await sequelize.query(`
+      SELECT
+        COUNT(*)::int AS totalEventos,
+        COUNT(*) FILTER (WHERE e.estado = 'aprobado')::int AS aprobados,
+        COUNT(*) FILTER (WHERE e.estado = 'pendiente')::int AS pendientes,
+        COUNT(*) FILTER (WHERE e.estado = 'rechazado')::int AS rechazados,
+        ROUND(COALESCE(AVG(EXTRACT(EPOCH FROM (
+          ${safeDate('e.fecha_aprobacion')} - ${safeDate('e.created_at')}
+        )) / 86400), 1) AS diasPromedioAprobacion
+      FROM evento e
+      ${where}`, { replacements: rr, type: sequelize.QueryTypes.SELECT }
+    );
+
+    // 2. Asistencia total (segmento objetivo alcanzado en informes)
+    const [asis] = await sequelize.query(`
+      SELECT COALESCE(SUM(
+        COALESCE(ie.segmento_alcanzado_estudiantes, 0) +
+        COALESCE(ie.segmento_alcanzado_docentes, 0) +
+        COALESCE(ie.segmento_alcanzado_publico_externo, 0) +
+        COALESCE(ie.segmento_alcanzado_influencers, 0) +
+        COALESCE(ie.segmento_alcanzado_otro_cantidad, 0)
+      ), 0)::int AS asistentes
+      FROM evento e
+      LEFT JOIN informe_evento ie ON ie.idevento = e.idevento
+      ${where}`, { replacements: rr, type: sequelize.QueryTypes.SELECT }
+    );
+
+    // 3. Inscritos totales
+    const [insc] = await sequelize.query(`
+      SELECT COUNT(*)::int AS inscritos
+      FROM evento_inscripciones ei
+      JOIN evento e ON e.idevento = ei.idevento
+      ${where}`, { replacements: rr, type: sequelize.QueryTypes.SELECT }
+    );
+
+    // 4. Ejecución presupuestaria (presupuesto planificado vs real)
+    const [eje] = await sequelize.query(`
+      SELECT COALESCE(SUM(p.total_egresos), 0)  AS pres_egresos,
+             COALESCE(SUM(p.total_ingresos), 0) AS pres_ingresos,
+             COALESCE(SUM(ie.total_egresos_real), 0)  AS real_egresos,
+             COALESCE(SUM(ie.total_ingresos_real), 0) AS real_ingresos,
+             COALESCE(SUM(ie.balance_real), 0)        AS balance_real
+      FROM evento e
+      LEFT JOIN presupuesto p ON p.idevento = e.idevento
+      LEFT JOIN informe_evento ie ON ie.idevento = e.idevento
+      ${where}`, { replacements: rr, type: sequelize.QueryTypes.SELECT }
+    );
+
+    // 5. Aceptación por facultad
+    const aceptacionPorFacultad = await sequelize.query(`
+      SELECT COALESCE(f.nombre_facultad, 'Sin facultad') AS facultad,
+             COUNT(*)::int AS total,
+             COUNT(*) FILTER (WHERE e.estado = 'aprobado')::int AS aprobados
+      FROM evento e
+      LEFT JOIN academico a ON a.idacademico = e.idacademico
+      LEFT JOIN facultad f ON f.facultad_id = a.facultad_id
+      ${where}
+      GROUP BY f.nombre_facultad
+      ORDER BY aprobados DESC
+      LIMIT 10`, { replacements: rr, type: sequelize.QueryTypes.SELECT }
+    );
+
+    // 6. Top solicitantes (por eventos aprobados)
+    const topSolicitantes = await sequelize.query(`
+      SELECT CONCAT(COALESCE(u.nombre, 'Docente'), ' ', COALESCE(u.apellidopat, '')) AS nombre,
+             COUNT(*)::int AS total,
+             COUNT(*) FILTER (WHERE e.estado = 'aprobado')::int AS aprobados
+      FROM evento e
+      JOIN academico a ON a.idacademico = e.idacademico
+      JOIN usuario u ON u.idusuario = a.idusuario
+      ${where}
+      GROUP BY u.nombre, u.apellidopat
+      ORDER BY aprobados DESC, total DESC
+      LIMIT 8`, { replacements: rr, type: sequelize.QueryTypes.SELECT }
+    );
+
+    // 7. Asistencia por evento (para columnas de la tabla)
+    const asistenciaPorEvento = await sequelize.query(`
+      SELECT e.idevento,
+             (SELECT COUNT(*)::int FROM evento_inscripciones ei WHERE ei.idevento = e.idevento) AS inscritos,
+             (COALESCE(ie.segmento_alcanzado_estudiantes, 0) +
+              COALESCE(ie.segmento_alcanzado_docentes, 0) +
+              COALESCE(ie.segmento_alcanzado_publico_externo, 0) +
+              COALESCE(ie.segmento_alcanzado_influencers, 0) +
+              COALESCE(ie.segmento_alcanzado_otro_cantidad, 0)) AS asistentes
+      FROM evento e
+      LEFT JOIN informe_evento ie ON ie.idevento = e.idevento
+      ${where}
+      ORDER BY e.fechaevento DESC`, { replacements: rr, type: sequelize.QueryTypes.SELECT }
+    );
+
+    // 8. Ejecución presupuestaria por evento (para columnas de la tabla)
+    const ejecucionPorEvento = await sequelize.query(`
+      SELECT e.idevento,
+             COALESCE(p.total_egresos, 0)  AS pres_egresos,
+             COALESCE(p.total_ingresos, 0) AS pres_ingresos,
+             COALESCE(ie.total_egresos_real, 0)  AS real_egresos,
+             COALESCE(ie.total_ingresos_real, 0) AS real_ingresos
+      FROM evento e
+      LEFT JOIN presupuesto p ON p.idevento = e.idevento
+      LEFT JOIN informe_evento ie ON ie.idevento = e.idevento
+      ${where}
+      ORDER BY e.fechaevento DESC`, { replacements: rr, type: sequelize.QueryTypes.SELECT }
+    );
+
+    const totalEventos = parseInt(agg?.totalEventos || 0);
+    const pct = (num, den) => (den > 0 ? Math.round((num / den) * 100) : null);
+    const pct1 = (num, den) => (den > 0 ? Math.round((num / den) * 1000) / 10 : null);
+
+    res.status(200).json({
+      totalEventos,
+      aprobados: parseInt(agg?.aprobados || 0),
+      pendientes: parseInt(agg?.pendientes || 0),
+      rechazados: parseInt(agg?.rechazados || 0),
+      diasPromedioAprobacion: agg?.diasPromedioAprobacion !== null && agg?.diasPromedioAprobacion !== undefined
+        ? Number(agg.diasPromedioAprobacion) : null,
+      asistentes: parseInt(asis?.asistentes || 0),
+      inscritos: parseInt(insc?.inscritos || 0),
+      tasaAsistencia: pct1(parseInt(asis?.asistentes || 0), parseInt(insc?.inscritos || 0)),
+      ejecucionPresupuestaria: {
+        pres_egresos: parseFloat(eje?.pres_egresos || 0),
+        pres_ingresos: parseFloat(eje?.pres_ingresos || 0),
+        real_egresos: parseFloat(eje?.real_egresos || 0),
+        real_ingresos: parseFloat(eje?.real_ingresos || 0),
+        balance_real: parseFloat(eje?.balance_real || 0),
+        porcentaje: pct(parseFloat(eje?.real_egresos || 0), parseFloat(eje?.pres_egresos || 0)),
+      },
+      aceptacionPorFacultad: aceptacionPorFacultad.map(r => ({
+        facultad: r.facultad,
+        total: parseInt(r.total),
+        aprobados: parseInt(r.aprobados),
+        tasa: pct(parseInt(r.aprobados), parseInt(r.total)),
+      })),
+      topSolicitantes: topSolicitantes.map(r => ({
+        nombre: r.nombre,
+        total: parseInt(r.total),
+        aprobados: parseInt(r.aprobados),
+      })),
+      asistenciaPorEvento: asistenciaPorEvento.map(r => ({
+        idevento: r.idevento,
+        inscritos: parseInt(r.inscritos || 0),
+        asistentes: parseInt(r.asistentes || 0),
+        tasa: pct1(parseInt(r.asistentes || 0), parseInt(r.inscritos || 0)),
+      })),
+      ejecucionPorEvento: ejecucionPorEvento.map(r => ({
+        idevento: r.idevento,
+        pres_egresos: parseFloat(r.pres_egresos || 0),
+        pres_ingresos: parseFloat(r.pres_ingresos || 0),
+        real_egresos: parseFloat(r.real_egresos || 0),
+        real_ingresos: parseFloat(r.real_ingresos || 0),
+        porcentaje: pct(parseFloat(r.real_egresos || 0), parseFloat(r.pres_egresos || 0)),
+      })),
+    });
+  } catch (err) {
+    console.error('❌ Error getReporteGestion:', err.message);
+    res.status(500).json({ error: 'Error al generar reporte de gestión', message: err.message });
+  }
+};
+
 module.exports = {
   getReporteInscripciones,
   getReporteOperacionales,
   getReporteEconomicos,
   getReporteRecursos,
   getReporteTipos,
+  getReporteGestion,
 };

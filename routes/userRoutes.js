@@ -38,7 +38,7 @@ router.put('/unlink-telegram', unlinkTelegram);
 
 router.get('/comite', authorize(['admin', 'academico']), getComite);
 router.get('/email/:email', authorize(['admin']), getUserByEmail);
-router.get('/daf', authorize(['admin']), getUsersDaf);
+router.get('/daf', authorize(['admin', 'daf']), getUsersDaf);
 
 router.get('/', authorize(['admin', 'academico']), getAllUsers);
 router.post('/', authorize(['admin']), createUser);
