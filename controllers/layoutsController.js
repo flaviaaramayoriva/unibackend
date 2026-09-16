@@ -177,5 +177,6 @@ const eliminarLayout = asyncHandler(async (req, res) => {
 module.exports = {
   crearLayout,
   obtenerLayouts,
-  eliminarLayout
+  eliminarLayout,
+  generarLayoutIA
 };
