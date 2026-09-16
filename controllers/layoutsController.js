@@ -101,103 +101,12 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
       });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.error('❌ GEMINI_API_KEY no definida');
+    const svgCode = generarSVGLayout(prompt.trim());
+
+    if (!svgCode || !svgCode.startsWith('<svg')) {
       return res.status(500).json({ 
         success: false, 
-        message: 'Error de configuración: clave de IA no disponible' 
-      });
-    }
-
-    // Probar primero ListModels para ver qué modelos están disponibles
-    const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`;
-    
-    const listResponse = await fetch(listUrl, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-
-    if (!listResponse.ok) {
-      const listError = await listResponse.text();
-      console.error('❌ Error al listar modelos:', listResponse.status, listError);
-      return res.status(500).json({ 
-        success: false, 
-        message: 'Error al comunicarse con la IA' 
-      });
-    }
-
-    const listData = await listResponse.json();
-    const availableModels = listData.models || [];
-    console.log('🔍 Modelos disponibles:', availableModels.map(m => m.name));
-    
-    // Encontrar el primer modelo que soporte generateContent
-    let targetModel = null;
-    for (const model of availableModels) {
-      if (model.name && model.name.includes('generateContent')) {
-        targetModel = model.name;
-        break;
-      }
-    }
-
-    // Si no encontramos un modelo con generateContent, usar el primero disponible
-    if (!targetModel && availableModels.length > 0) {
-      targetModel = availableModels[0].name;
-    }
-
-    if (!targetModel) {
-      return res.status(500).json({ 
-        success: false, 
-        message: 'No se encontraron modelos disponibles' 
-      });
-    }
-
-    // Usar el modelo encontrado con la llamada de generateContent
-    const modelUrl = `https://generativelanguage.googleapis.com/v1beta/${targetModel}:generateContent?key=${apiKey}`;
-    
-    const response = await fetch(modelUrl, {
-      method: 'POST',
-      headers: {
-        'X-goog-api-key': apiKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: `Genera un código SVG de un plano de layout para un evento universitario. El layout debe ser un plano simple con áreas para mesas y circulación. Incluye una descripción textual breve. Prompt: "${prompt}". Responde SOLO con el código SVG válido y nada más, sin explicaciones ni texto adicional.`
-          }]
-        }]
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ Error API Gemini:', response.status, errorText);
-      return res.status(500).json({ 
-        success: false, 
-        message: 'Error al comunicarse con la IA. Revisa la consola del servidor.' 
-      });
-    }
-
-    const data = await response.json();
-    
-    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
-      console.error('❌ Respuesta inesperada de Gemini:', data);
-      return res.status(500).json({ 
-        success: false, 
-        message: 'Respuesta inesperada de la IA' 
-      });
-    }
-
-    const svgCode = data.candidates[0].content.parts[0].text.trim();
-
-    if (!svgCode.startsWith('<svg')) {
-      console.error('❌ No se generó SVG válido:', svgCode.substring(0, 200));
-      return res.status(500).json({ 
-        success: false, 
-        message: 'No se generó un SVG válido' 
+        message: 'No se pudo generar el layout SVG' 
       });
     }
 
@@ -205,13 +114,13 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
     const { Layout } = models;
 
     const nuevoLayout = await Layout.create({
-      nombre: `Layout IA - ${prompt.substring(0, 30).trim()}`,
+      nombre: `Layout - ${prompt.substring(0, 30).trim()}`,
       url_imagen: `data:image/svg+xml;base64,${Buffer.from(svgCode).toString('base64')}`
     });
 
     res.status(201).json({ 
       success: true, 
-      message: 'Layout generado con IA exitosamente',
+      message: 'Layout generado exitosamente',
       layout: {
         id: nuevoLayout.idlayout,
         nombre: nuevoLayout.nombre,
@@ -221,13 +130,47 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
     });
 
   } catch (error) {
-    console.error('❌ Error al generar layout con IA:', error);
+    console.error('❌ Error al generar layout:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Error interno al generar layout con IA' 
+      message: 'Error interno al generar layout' 
     });
   }
 });
+
+function generarSVGLayout(prompt) {
+    const lower = prompt.toLowerCase();
+    
+    let svg = '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="400">';
+    
+    // Área de fondo
+    svg += '<rect width="500" height="400" fill="#fafafa"/>';
+    
+    // Área de circulación (pasillos)
+    svg += '<g stroke="#e5e7eb" stroke-width="2">';
+    if (lower.includes('circulación') || lower.includes('pasillo')) {
+        svg += '<line x1="50" y1="100" x2="450" y2="100"/>';
+        svg += '<line x1="50" y1="300" x2="450" y2="300"/>';
+    } else {
+        svg += '<line x1="50" y1="150" x2="450" y2="150"/>';
+        svg += '<line x1="50" y1="250" x2="450" y2="250"/>';
+    }
+    svg += '</g>';
+    
+    // Áreas de mesas
+    const mesaCount = lower.includes('mesa') ? Math.min(parseInt(prompt.match(/(\d+)/)?.[1] || 4, 10), 8) : 4;
+    const tableWidth = 60, tableDepth = 40;
+    const startX = 50, startY = 80;
+    
+    for (let i = 0; i < mesaCount; i++) {
+        const x = startX + (i % 2) * (tableWidth + 20);
+        const y = startY + Math.floor(i / 2) * (tableDepth + 20);
+        svg += `<rect x="${x}" y="${y}" width="${tableWidth}" depth="${tableDepth}" fill="#1f2937"/>`;
+    }
+    
+    svg += '</svg>';
+    return svg;
+}
 
 const eliminarLayout = asyncHandler(async (req, res) => {
   try {
