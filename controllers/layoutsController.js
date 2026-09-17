@@ -118,8 +118,19 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
     const filename = `layout.svg`;
     const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
     const filePath = path.join(layoutsDir, `${uniqueSuffix}-${filename}`);
-    const svgContent = `<?xml version="1.0" encoding="UTF-8"?>${svgCode}`;
-    fs.writeFileSync(filePath, svgContent);
+    
+    // Escribir archivo y capturar errores
+    try {
+      const svgContent = `<?xml version="1.0" encoding="UTF-8"?>${svgCode}`;
+      fs.writeFileSync(filePath, svgContent);
+      console.log('✅ Archivo guardado en:', filePath);
+    } catch (writeError) {
+      console.error('❌ Error escribiendo archivo:', writeError);
+      return res.status(500).json({ 
+        success: false, 
+        message: 'Error guardando archivo físico: ' + writeError.message 
+      });
+    }
 
     const models = getModels();
     const { Layout } = models;
@@ -146,7 +157,7 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
     console.error('❌ Error al generar layout:', error);
     res.status(500).json({ 
       success: false, 
-      message: 'Error interno al generar layout' 
+      message: 'Error interno al generar layout: ' + error.message 
     });
   }
 });
