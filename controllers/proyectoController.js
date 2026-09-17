@@ -676,7 +676,20 @@ const layout = layoutData[0] || null;
     });
 
     const objetivos = Array.from(objetivosMap.values());
+
     
+    const [segmentosRaw] = await sequelize.query(
+      `SELECT es."idevento",
+              es."idsegmento",
+              s."nombre_segmento",
+              es."texto_personalizado"
+       FROM "evento_segmento" es
+       JOIN "segmento" s ON es."idsegmento" = s."idsegmento"
+       WHERE es."idevento" = ?`,
+      { replacements: [eventIdNum] }
+    );
+    const segmentos = segmentosRaw;
+
     const pdiRows = await sequelize.query(
       `SELECT "descripcion" FROM evento_pdi WHERE idevento = :idevento ORDER BY idevento_pdi ASC`,
       { 
@@ -772,6 +785,8 @@ const layout = layoutData[0] || null;
       Resultados: resultados || [],
       TiposDeEvento: tiposDeEvento,
       Objetivos: objetivos,
+      Segmentos: segmentos,
+      segmentos: segmentos,
       Comite: comite,
       Recursos: recursos,
       Presupuesto: presupuesto,
