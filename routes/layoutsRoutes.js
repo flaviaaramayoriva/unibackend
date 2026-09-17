@@ -35,6 +35,6 @@ const uploadLayout = multer({
 router.post('/', protect, uploadLayout.single('imagen'), crearLayout);
 router.get('/', protect, obtenerLayouts);
 router.delete('/:id', protect, eliminarLayout);
-router.post('/ia', protect, generarLayoutIA);
+router.post('/ia', generarLayoutIA);
 
 module.exports = router;
