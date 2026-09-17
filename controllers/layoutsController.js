@@ -153,32 +153,47 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
 
 function generarSVGLayout(prompt) {
     const lower = prompt.toLowerCase();
+    const diameter = 480;
+    const centerX = 250, centerY = 200;
+    const radius = 180;
+    const chairWidth = 8, chairDepth = 10;
+    const tableDiameter = 60;
     
     let svg = '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="400">';
-    
-    // Área de fondo
     svg += '<rect width="500" height="400" fill="#fafafa"/>';
-    
-    // Área de circulación (pasillos)
     svg += '<g stroke="#e5e7eb" stroke-width="2">';
-    if (lower.includes('circulación') || lower.includes('pasillo')) {
-        svg += '<line x1="50" y1="100" x2="450" y2="100"/>';
-        svg += '<line x1="50" y1="300" x2="450" y2="300"/>';
-    } else {
-        svg += '<line x1="50" y1="150" x2="450" y2="150"/>';
-        svg += '<line x1="50" y1="250" x2="450" y2="250"/>';
-    }
+    
+    // Detectar capacidad y forma
+    const personCount = lower.includes('50') ? 50 : 
+                       lower.includes('40') ? 40 : 
+                       lower.includes('30') ? 30 : 
+                       parseInt(prompt.match(/(\d+)/)?.[1] || 30);
+    
+    // Distribución circular
+    const angularStep = (2 * Math.PI) / personCount;
+    const innerRadius = radius - 40; // Espacio entre borde y mesas
+    
+    // Circulación circular (pasillo central)
+    svg += '<line x1="250" y1="50" x2="250" y2="350" />';
+    svg += '<line x1="50" y1="200" x2="450" y2="200" />';
     svg += '</g>';
     
-    // Áreas de mesas
-    const mesaCount = lower.includes('mesa') ? Math.min(parseInt(prompt.match(/(\d+)/)?.[1] || 4, 10), 8) : 4;
-    const tableWidth = 60, tableDepth = 40;
-    const startX = 50, startY = 80;
-    
-    for (let i = 0; i < mesaCount; i++) {
-        const x = startX + (i % 2) * (tableWidth + 20);
-        const y = startY + Math.floor(i / 2) * (tableDepth + 20);
-        svg += `<rect x="${x}" y="${y}" width="${tableWidth}" height="${tableDepth}" fill="#1f2937"/>`;
+    // Generar posiciones circulares para mesas y sillas
+    for (let i = 0; i < personCount; i++) {
+        const angle = i * angularStep - Math.PI / 2;
+        const tableX = centerX + (innerRadius / 2) * Math.cos(angle);
+        const tableY = centerY + (innerRadius / 2) * Math.sin(angle);
+        const chairX = centerX + radius * Math.cos(angle);
+        const chairY = centerY + radius * Math.sin(angle);
+        
+        // Mesa pequeña en posición radial
+        svg += `<circle cx="${tableX}" cy="${tableY}" r="${tableDiameter/2}" fill="#1f2937"/>`;
+        
+        // Silla en posición circular exterior
+        const chairAngle = angle + Math.PI / personCount;
+        const cX = centerX + (radius - 15) * Math.cos(chairAngle);
+        const cY = centerY + (radius - 15) * Math.sin(chairAngle);
+        svg += `<rect x="${cX - chairWidth/2}" y="${cY - chairDepth/2}" width="${chairWidth}" height="${chairDepth}" fill="#6b7280"/>`;
     }
     
     svg += '</svg>';
