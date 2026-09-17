@@ -164,49 +164,125 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
 
 function generarSVGLayout(prompt) {
     const lower = prompt.toLowerCase();
-    const diameter = 480;
-    const centerX = 250, centerY = 200;
-    const radius = 180;
-    const chairWidth = 8, chairDepth = 10;
-    const tableDiameter = 60;
-    
-    let svg = '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="400">';
-    svg += '<rect width="500" height="400" fill="#fafafa"/>';
-    svg += '<g stroke="#e5e7eb" stroke-width="2">';
-    
-    // Detectar capacidad y forma
     const personCount = lower.includes('50') ? 50 : 
                        lower.includes('40') ? 40 : 
                        lower.includes('30') ? 30 : 
                        parseInt(prompt.match(/(\d+)/)?.[1] || 30);
-    
-    // Distribución circular
-    const angularStep = (2 * Math.PI) / personCount;
-    const innerRadius = radius - 40; // Espacio entre borde y mesas
-    
-    // Circulación circular (pasillo central)
+
+    if (/aula|clase|salon|salón|escuela|colegio|conferencia|auditorio|catedra|cátedra/.test(lower)) {
+        return generarLayoutAula(personCount);
+    }
+    if (/patio|exterior|aire libre|jardin|jardín|terraza|courtyard|plaza/.test(lower)) {
+        return generarLayoutPatio(personCount);
+    }
+    return generarLayoutCircular(personCount);
+}
+
+function generarLayoutCircular(personCount) {
+    const centerX = 250, centerY = 200;
+    const radius = 180;
+    const chairWidth = 8, chairDepth = 10;
+    const tableDiameter = 60;
+
+    let svg = '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="400">';
+    svg += '<rect width="500" height="400" fill="#fafafa"/>';
+    svg += '<text x="14" y="20" font-family="sans-serif" font-size="11" fill="#9ca3af">CIRCULAR · ' + personCount + ' personas</text>';
+    svg += '<g stroke="#e5e7eb" stroke-width="2">';
     svg += '<line x1="250" y1="50" x2="250" y2="350" />';
     svg += '<line x1="50" y1="200" x2="450" y2="200" />';
     svg += '</g>';
-    
-    // Generar posiciones circulares para mesas y sillas
+
+    const angularStep = (2 * Math.PI) / personCount;
+    const innerRadius = radius - 40;
+
     for (let i = 0; i < personCount; i++) {
         const angle = i * angularStep - Math.PI / 2;
         const tableX = centerX + (innerRadius / 2) * Math.cos(angle);
         const tableY = centerY + (innerRadius / 2) * Math.sin(angle);
-        const chairX = centerX + radius * Math.cos(angle);
-        const chairY = centerY + radius * Math.sin(angle);
-        
-        // Mesa pequeña en posición radial
         svg += `<circle cx="${tableX}" cy="${tableY}" r="${tableDiameter/2}" fill="#1f2937"/>`;
-        
-        // Silla en posición circular exterior
+
         const chairAngle = angle + Math.PI / personCount;
         const cX = centerX + (radius - 15) * Math.cos(chairAngle);
         const cY = centerY + (radius - 15) * Math.sin(chairAngle);
         svg += `<rect x="${cX - chairWidth/2}" y="${cY - chairDepth/2}" width="${chairWidth}" height="${chairDepth}" fill="#6b7280"/>`;
     }
-    
+
+    svg += '</svg>';
+    return svg;
+}
+
+function generarLayoutAula(personCount) {
+    const chairsPerRow = 10;
+    const rows = Math.ceil(personCount / chairsPerRow);
+
+    let svg = '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="400">';
+    svg += '<rect width="500" height="400" fill="#fafafa"/>';
+    svg += '<text x="14" y="20" font-family="sans-serif" font-size="11" fill="#9ca3af">AULA · ' + personCount + ' personas</text>';
+
+    svg += '<rect x="150" y="28" width="200" height="10" rx="2" fill="#374151"/>';
+    svg += '<rect x="233" y="42" width="34" height="14" rx="2" fill="#1f2937"/>';
+
+    const deskW = 28, deskH = 16, chairW = 16, chairH = 10;
+    const pitchX = 40, pitchY = 42;
+    const startXLeft = 45, startXRight = 265, startY = 76;
+    const colsHalf = chairsPerRow / 2;
+
+    for (let i = 0; i < personCount; i++) {
+        const row = Math.floor(i / chairsPerRow);
+        const posInRow = i % chairsPerRow;
+        const side = posInRow < colsHalf ? 0 : 1;
+        const colInSide = posInRow % colsHalf;
+        const x = (side === 0 ? startXLeft : startXRight) + colInSide * pitchX;
+        const y = startY + row * pitchY;
+        svg += `<rect x="${x}" y="${y}" width="${deskW}" height="${deskH}" rx="2" fill="#1f2937"/>`;
+        svg += `<rect x="${x + (deskW - chairW) / 2}" y="${y + deskH + 3}" width="${chairW}" height="${chairH}" rx="2" fill="#6b7280"/>`;
+    }
+
+    svg += '<line x1="250" y1="76" x2="250" y2="330" stroke="#e5e7eb" stroke-width="2"/>';
+    svg += '<rect x="238" y="340" width="24" height="40" fill="#ffffff" stroke="#9ca3af"/>';
+    svg += '<line x1="238" y1="340" x2="238" y2="380" stroke="#9ca3af"/>';
+    svg += '</svg>';
+    return svg;
+}
+
+function generarLayoutPatio(personCount) {
+    const topLen = 414, rightLen = 288, bottomLen = 414, leftLen = 288;
+    const total = topLen + rightLen + bottomLen + leftLen;
+    const nTop = Math.round(personCount * topLen / total);
+    const nRight = Math.round(personCount * rightLen / total);
+    const nBottom = Math.round(personCount * bottomLen / total);
+    const nLeft = personCount - nTop - nRight - nBottom;
+
+    let svg = '<svg xmlns="http://www.w3.org/2000/svg" width="500" height="400">';
+    svg += '<rect width="500" height="400" fill="#fafafa"/>';
+    svg += '<text x="14" y="20" font-family="sans-serif" font-size="11" fill="#9ca3af">PATIO · ' + personCount + ' personas</text>';
+
+    svg += '<rect x="46" y="46" width="414" height="10" rx="2" fill="#374151"/>';
+    svg += '<rect x="46" y="344" width="414" height="10" rx="2" fill="#374151"/>';
+    svg += '<rect x="44" y="56" width="10" height="288" rx="2" fill="#374151"/>';
+    svg += '<rect x="446" y="56" width="10" height="288" rx="2" fill="#374151"/>';
+
+    const chairW = 20, chairH = 18;
+
+    for (let i = 0; i < nTop; i++) {
+        const x = 46 + (i + 0.5) * (414 / nTop) - chairW / 2;
+        svg += `<rect x="${x}" y="60" width="${chairW}" height="${chairH}" rx="3" fill="#6b7280"/>`;
+    }
+    for (let i = 0; i < nRight; i++) {
+        const y = 56 + (i + 0.5) * (288 / nRight) - chairH / 2;
+        svg += `<rect x="416" y="${y}" width="${chairW}" height="${chairH}" rx="3" fill="#6b7280"/>`;
+    }
+    for (let i = 0; i < nBottom; i++) {
+        const x = 46 + (i + 0.5) * (414 / nBottom) - chairW / 2;
+        svg += `<rect x="${x}" y="318" width="${chairW}" height="${chairH}" rx="3" fill="#6b7280"/>`;
+    }
+    for (let i = 0; i < nLeft; i++) {
+        const y = 56 + (i + 0.5) * (288 / nLeft) - chairH / 2;
+        svg += `<rect x="60" y="${y}" width="${chairW}" height="${chairH}" rx="3" fill="#6b7280"/>`;
+    }
+
+    svg += '<circle cx="250" cy="200" r="26" fill="#bfdbfe" stroke="#93c5fd" stroke-width="2"/>';
+    svg += '<circle cx="250" cy="200" r="10" fill="#93c5fd"/>';
     svg += '</svg>';
     return svg;
 }
@@ -240,5 +316,6 @@ module.exports = {
   crearLayout,
   obtenerLayouts,
   eliminarLayout,
-  generarLayoutIA
+  generarLayoutIA,
+  generarSVGLayout
 };
