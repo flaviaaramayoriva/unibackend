@@ -136,10 +136,10 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
     const { Layout } = models;
 
     const dbFileName = `${uniqueSuffix}-${filename}`;
-    const urlImagen = `/uploads/${dbFileName}`;
+    const urlImagen = `/uploads/layouts/${dbFileName}`;
     const nuevoLayout = await Layout.create({
       nombre: `Layout IA - ${prompt.substring(0, 30).trim()}`,
-      url_imagen: dbFileName
+      url_imagen: `layouts/${dbFileName}`
     });
 
     res.status(201).json({ 
