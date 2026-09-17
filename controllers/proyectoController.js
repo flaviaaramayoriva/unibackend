@@ -415,7 +415,13 @@ const getAllEventos = async (req, res) => {
 
   const eventos = await Evento.findAll({
     order: [['fechaevento', 'ASC'], ['horaevento', 'ASC']],
-    attributes: { exclude: ['organizerId', 'categoryId', 'locationId'] }
+    attributes: { exclude: ['organizerId', 'categoryId', 'locationId'] },
+    include: [{
+      model: User,
+      as: 'academicoCreador',
+      attributes: ['idusuario', 'nombre', 'apellidopat', 'apellidomat', 'email', 'role'],
+      required: false
+    }]
   });
 
   const tiposRaw = await sequelize.query(
