@@ -92,7 +92,7 @@ const obtenerLayouts = asyncHandler(async (req, res) => {
 
 const generarLayoutIA = asyncHandler(async (req, res) => {
   try {
-    const { prompt } = req.body;
+    const { prompt, recursos } = req.body;
 
     if (!prompt?.trim()) {
       return res.status(400).json({ 
@@ -101,7 +101,13 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
       });
     }
 
-    const svgCode = generarSVGLayout(prompt.trim());
+    const recursosNorm = Array.isArray(recursos) ? recursos.filter(r => r).map(r => ({
+      nombre_recurso: String(r.nombre_recurso || r.nombre || '').trim(),
+      recurso_tipo: String(r.recurso_tipo || '').trim(),
+      cantidad: parseInt(r.cantidad) > 0 ? parseInt(r.cantidad) : 1,
+    })) : [];
+
+    const svgCode = generarSVGLayout(prompt.trim(), recursosNorm);
 
     if (!svgCode || !svgCode.startsWith('<svg')) {
       return res.status(500).json({ 
@@ -162,20 +168,138 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
   }
 });
 
-function generarSVGLayout(prompt) {
+function generarSVGLayout(prompt, recursos = []) {
     const lower = prompt.toLowerCase();
     const personCount = lower.includes('50') ? 50 : 
                        lower.includes('40') ? 40 : 
                        lower.includes('30') ? 30 : 
                        parseInt(prompt.match(/(\d+)/)?.[1] || 30);
 
+    let svg;
     if (/aula|clase|salon|salón|escuela|colegio|conferencia|auditorio|catedra|cátedra/.test(lower)) {
-        return generarLayoutAula(personCount);
+        svg = generarLayoutAula(personCount);
     }
-    if (/patio|exterior|aire libre|jardin|jardín|terraza|courtyard|plaza/.test(lower)) {
-        return generarLayoutPatio(personCount);
+    else if (/patio|exterior|aire libre|jardin|jardín|terraza|courtyard|plaza/.test(lower)) {
+        svg = generarLayoutPatio(personCount);
     }
-    return generarLayoutCircular(personCount);
+    else {
+        svg = generarLayoutCircular(personCount);
+    }
+
+    if (Array.isArray(recursos) && recursos.length > 0) {
+        svg = dibujarRecursosEnSVG(svg, recursos);
+    }
+
+    return svg;
+}
+
+function escapeXml(value = '') {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+}
+
+function dibujarRecursosEnSVG(svg, recursos) {
+    let extra = '';
+
+    // ── Pantallas / proyectores (frente del salón) ───────────────────────
+    const pantallas = recursos.filter(r => /pantalla|proyector|proyec|televisor|tv|plasma|lcd|led/.test(r.nombre_recurso.toLowerCase()));
+    if (pantallas.length > 0) {
+        extra += '<g id="rec-pantalla">';
+        extra += '<rect x="196" y="52" width="108" height="62" rx="3" fill="#1e293b"/>';
+        extra += '<rect x="200" y="56" width="100" height="56" rx="2" fill="#60a5fa"/>';
+        extra += '<circle cx="250" cy="84" r="15" fill="none" stroke="#bfdbfe" stroke-width="2"/>';
+        extra += '<text x="250" y="120" text-anchor="middle" font-family="sans-serif" font-size="9" fill="#475569">Pantalla</text>';
+        extra += '</g>';
+    }
+
+    // ── Sonido / parlantes (esquinas traseras) ───────────────────────────
+    const sonido = recursos.filter(r => /sonido|parlante|bafle|altavoz|amplif|caja acustica|caja acústica|tweet|subwoofer/.test(r.nombre_recurso.toLowerCase()));
+    const nSonido = Math.min(Math.max(sonido.reduce((acc, r) => acc + (parseInt(r.cantidad) || 1), 0), 0), 4);
+    if (nSonido > 0) {
+        extra += '<g id="rec-sonido">';
+        for (let i = 0; i < nSonido; i++) {
+            const y = i < 2 ? 250 : 320;
+            extra += `<rect x="${i % 2 === 0 ? 30 : 456}" y="${y}" width="14" height="46" rx="3" fill="#312e81"/>`;
+            extra += `<circle cx="${i % 2 === 0 ? 37 : 463}" cy="${y + 16}" r="6" fill="#6366f1"/>`;
+            extra += `<circle cx="${i % 2 === 0 ? 37 : 463}" cy="${y + 34}" r="4" fill="#818cf8"/>`;
+        }
+        extra += '</g>';
+    }
+
+    // ── Mesas (distribuidas en la zona central/despejada) ─────────────────
+    const mesas = recursos.filter(r => /mesa|tabla|banquete|comedor/.test(r.nombre_recurso.toLowerCase()) && !/mantel/.test(r.nombre_recurso.toLowerCase()));
+    let mesasDraw = '';
+    let mesaIdx = 0;
+    for (const m of mesas) {
+        const n = Math.min(parseInt(m.cantidad) || 1, 12);
+        for (let i = 0; i < n; i++) {
+            if (mesaIdx >= 12) break;
+            const col = mesaIdx % 4;
+            const row = Math.floor(mesaIdx / 4);
+            const x = 130 + col * 80;
+            const y = 170 + row * 70;
+            mesasDraw += `<circle cx="${x}" cy="${y}" r="26" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>`;
+            mesasDraw += `<circle cx="${x}" cy="${y}" r="14" fill="#e2e8f0" stroke="#cbd5e1"/>`;
+            mesasDraw += `<text x="${x}" y="${y + 3}" text-anchor="middle" font-family="sans-serif" font-size="8" fill="#64748b">M${mesaIdx + 1}</text>`;
+            mesaIdx++;
+        }
+    }
+    if (mesasDraw) {
+        extra += `<g id="rec-mesas">${mesasDraw}</g>`;
+    }
+
+    // ── Sillas / butacas (acompañan a las mesas) ─────────────────────────
+    const sillas = recursos.filter(r => /silla|butaca|asiento|pupitre|banco/.test(r.nombre_recurso.toLowerCase()));
+    let sillasDraw = '';
+    const nSillas = Math.min(sillas.reduce((acc, r) => acc + (parseInt(r.cantidad) || 1), 0), 40);
+    if (nSillas > 0) {
+        for (let i = 0; i < nSillas; i++) {
+            const col = i % 10;
+            const row = Math.floor(i / 10);
+            const x = 196 + col * 13;
+            const y = 300 + row * 12;
+            sillasDraw += `<rect x="${x}" y="${y}" width="9" height="8" rx="1.5" fill="#c2410c" opacity="0.85"/>`;
+        }
+        extra += `<g id="rec-sillas">${sillasDraw}</g>`;
+    }
+
+    // ── Vajilla (decoración sobre mesas) ──────────────────────────────────
+    const vajilla = recursos.filter(r => /vajilla|plato|vaso|copa|taza|cubierto|servilleta|mantel/.test(r.nombre_recurso.toLowerCase()));
+    if (vajilla.length > 0 && mesaIdx > 0) {
+        extra += '<g id="rec-vajilla">';
+        const nVajillas = vajilla.reduce((acc, r) => acc + (parseInt(r.cantidad) || 1), 0);
+        for (let i = 0; i < Math.min(nVajillas, 24); i++) {
+            const mesaX = 130 + (i % 4) * 80;
+            const mesaY = 170 + Math.floor(i / 4) * 70;
+            const offsetX = (i % 3 - 1) * 6;
+            const offsetY = (Math.floor(i / 3) % 3 - 1) * 6;
+            extra += `<circle cx="${mesaX + offsetX}" cy="${mesaY + offsetY}" r="3" fill="#f59e0b" stroke="#b45309"/>`;
+        }
+        extra += '</g>';
+    }
+
+    // ── Otros recursos (etiqueta con cantidad, esquina inferior derecha) ─
+    const otros = recursos.filter(r => !/(pantalla|proyector|proyec|televisor|tv|plasma|lcd|led|sonido|parlante|bafle|altavoz|amplif|mesa|tabla|banquete|comedor|silla|butaca|asiento|pupitre|banco|vajilla|plato|vaso|copa|taza|cubierto|servilleta|mantel)/.test(r.nombre_recurso.toLowerCase()));
+
+    // ── Leyenda de recursos en la parte inferior ──────────────────────────
+    let leyenda = '';
+    let lx = 14;
+    const todos = [...pantallas, ...sonido, ...mesas, ...sillas, ...vajilla, ...otros];
+    if (todos.length > 0) {
+        leyenda += '<g id="rec-leyenda">';
+        todos.forEach(r => {
+            const label = `${r.nombre_recurso} ×${r.cantidad}`;
+            leyenda += `<text x="${lx}" y="392" font-family="sans-serif" font-size="8" fill="#64748b">${escapeXml(label)}</text>`;
+            lx += label.length * 5 + 6;
+        });
+        leyenda += '</g>';
+    }
+
+    return svg.replace('</svg>', `${extra}${leyenda}</svg>`);
 }
 
 function generarLayoutCircular(personCount) {

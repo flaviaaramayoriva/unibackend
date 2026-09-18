@@ -13,6 +13,7 @@ class ChatBotService {
     this.isTrained = false;
     this.cache = new Map();
     this.userCache = new Map();
+    this.sesionesCreacion = new Map();
     this.entrenar();
   }
 
@@ -56,12 +57,14 @@ class ChatBotService {
       { input: { telegram: 1, enviar: 1, mandar: 1, notify: 1 }, output: { enviar_telegram: 1 } },
       { input: { comparar: 1, diferencia: 1, versus: 1, vs: 1, comparacion: 1 }, output: { comparar: 1 } },
       { input: { sugerencia: 1, sugerir: 1, recomendar: 1, consejo: 1 }, output: { sugerencia: 1 } },
+      // ── NUEVAS: Crear evento ──
+      { input: { crear: 1, evento: 1, nuevo: 1, proyectar: 1, agendar: 1 }, output: { crear_evento: 1 } },
     ];
 
     this.net = new brain.NeuralNetwork({ hiddenLayers: [5], activation: 'sigmoid' });
     this.net.train(trainingData, { iterations: 1000, errorThresh: 0.005, log: false });
     this.isTrained = true;
-    console.log('✅ ChatBot IA entrenado v4 — Quick Actions + Reports + Telegram');
+    console.log('✅ ChatBot IA entrenado v5 — Quick Actions + Reports + Telegram + Crear Evento');
   }
 
   async safeQuery(label, sql, params = []) {
@@ -420,6 +423,220 @@ class ChatBotService {
     return this.enviarTelegram(chatId, msg);
   }
 
+  // ─── CREAR EVENTO (flujo conversacional) ─────────────────────────────────
+  _esIntencionCrearEvento(texto) {
+    const t = (texto || '').toLowerCase();
+    if (/\b(crear|proyectar|agendar)\b/.test(t)) return true;
+    return /\bevento\b/.test(t) && /\b(nuevo|nueva)\b/.test(t);
+  }
+
+  async _iniciarCreacion(userId, pregunta) {
+    if (!userId) {
+      return {
+        respuesta: '🔒 Para crear un evento necesito que inicies sesión. Inicia sesión en la app y vuelve a intentarlo.',
+      };
+    }
+
+    const limpio = pregunta
+      .replace(/^(por favor|quiero|necesito|me gustaria|me gustaría|puedo|puedes|ayudame a|vamos a)\s+/i, '')
+      .replace(/^(crear|registrar|organizar|proyectar|agendar)\b\s*/i, '')
+      .replace(/^(un|una|el|la)\s+/i, '')
+      .replace(/^(nuevo|nueva)\s+evento\s+/i, '')
+      .replace(/^(nuevo|nueva|evento)\s*/i, '')
+      .trim();
+
+    const tieneNombreInline = limpio.split(/\s+/).length >= 2;
+    const data = {};
+
+    if (tieneNombreInline) {
+      data.nombreevento = limpio.replace(/^:\s*/, '').trim();
+    }
+
+    this.sesionesCreacion.set(userId, { step: tieneNombreInline ? 'fecha' : 'nombre', data });
+
+    if (tieneNombreInline) {
+      return {
+        respuesta: `✅ Nombre del evento: <b>${data.nombreevento}</b>\n\n📅 Ahora dime la <b>fecha</b> (YYYY-MM-DD, ej: 2026-10-15 o "mañana").\n\nPuedes cancelar escribiendo "cancelar".`,
+      };
+    }
+    return {
+      respuesta: `📝 ¡Genial! Empecemos con la creación.\n\n✏️ ¿Cuál es el <b>nombre</b> del evento?\n\nPuedes cancelar escribiendo "cancelar".`,
+    };
+  }
+
+  async _continuarCreacion(userId, pregunta) {
+    const sesion = this.sesionesCreacion.get(userId);
+    const { step, data } = sesion;
+    const t = pregunta.trim();
+
+    if (/^(cancelar|cancela|cancel|no|dejar|parar|detener|salir)\b/i.test(t)) {
+      this.sesionesCreacion.delete(userId);
+      return { respuesta: '❌ Creación cancelada. No se creó ningún evento.\n\nPuedes volver a empezar con "crear evento".' };
+    }
+
+    switch (step) {
+      case 'nombre': {
+        const nombre = t.slice(0, 120);
+        if (nombre.length < 2) {
+          return { respuesta: '⚠️ El nombre debe tener al menos 2 caracteres. ¿Cuál es el nombre del evento?' };
+        }
+        data.nombreevento = nombre;
+        sesion.step = 'fecha';
+        this.sesionesCreacion.set(userId, sesion);
+        return { respuesta: `✅ Nombre: <b>${nombre}</b>\n\n📅 ¿Cuál es la <b>fecha</b>? (YYYY-MM-DD, ej: 2026-10-15 o "mañana")` };
+      }
+
+      case 'fecha': {
+        const fecha = this._parseFecha(t);
+        if (!fecha) {
+          return { respuesta: '⚠️ Fecha no válida. Usa el formato YYYY-MM-DD (ej: 2026-10-15), "hoy" o "mañana".' };
+        }
+        data.fechaevento = fecha;
+        sesion.step = 'hora';
+        this.sesionesCreacion.set(userId, sesion);
+        return { respuesta: `📅 Fecha: <b>${fecha}</b>\n\n⏰ ¿A qué <b>hora</b>? (HH:MM en formato 24h, ej: 19:00 o "7:30 PM")` };
+      }
+
+      case 'hora': {
+        const hora = this._parseHora(t);
+        if (!hora) {
+          return { respuesta: '⚠️ Hora no válida. Usa el formato HH:MM de 24 horas (ej: 19:00) o "7:30 PM".' };
+        }
+        data.horaevento = hora;
+        sesion.step = 'lugar';
+        this.sesionesCreacion.set(userId, sesion);
+        return { respuesta: `⏰ Hora: <b>${hora}</b>\n\n📍 ¿Dónde se realizará el evento? (salón, auditorio, etc.) o escribe "Por definir".` };
+      }
+
+      case 'lugar': {
+        const lugar = /^(por definir|sin definir|todavia|todavía|no se|prefiero no decirlo|\?\?*)$/i.test(t.trim())
+          ? 'Por definir'
+          : t.slice(0, 100).trim();
+        data.lugarevento = lugar;
+        sesion.step = 'confirmar';
+        this.sesionesCreacion.set(userId, sesion);
+        return {
+          respuesta: `📋 <b>Resumen del evento:</b>\n\n📝 Nombre: ${data.nombreevento}\n📅 Fecha: ${data.fechaevento}\n⏰ Hora: ${data.horaevento}\n📍 Lugar: ${lugar}\n\n¿Confirmas la creación? Responde <b>Sí</b> para confirmar o <b>No</b> para cancelar.`,
+        };
+      }
+
+      case 'confirmar': {
+        if (/^(s[ií]|confirmo|confirmar|dale|listo|adelante|acepto|crear)\b/i.test(t)) {
+          const resultado = await this._crearEventoFinal(userId, data);
+          this.sesionesCreacion.delete(userId);
+          return { respuesta: resultado.respuesta };
+        }
+        this.sesionesCreacion.delete(userId);
+        return { respuesta: '❌ Creación cancelada. No se creó ningún evento.\n\nPuedes volver a empezar con "crear evento".' };
+      }
+
+      default:
+        this.sesionesCreacion.delete(userId);
+        return { respuesta: '⚠️ Algo salió mal con la sesión. Escribe "crear evento" para empezar de nuevo.' };
+    }
+  }
+
+  _parseFecha(texto) {
+    const t = (texto || '').toLowerCase().trim();
+    if (t === 'hoy') return new Date().toISOString().slice(0, 10);
+    if (t === 'mañana' || t === 'manana') {
+      const d = new Date();
+      d.setDate(d.getDate() + 1);
+      return d.toISOString().slice(0, 10);
+    }
+    let m = t.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+    if (m) return `${m[1]}-${String(Number(m[2])).padStart(2, '0')}-${String(Number(m[3])).padStart(2, '0')}`;
+    m = t.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+    if (m) return `${m[3]}-${String(Number(m[2])).padStart(2, '0')}-${String(Number(m[1])).padStart(2, '0')}`;
+    return null;
+  }
+
+  _parseHora(texto) {
+    const t = (texto || '').toLowerCase().replace(/\s+/g, '');
+    const m = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+    if (!m) return null;
+    let h = Number(m[1]);
+    const mi = Number(m[2] || '00');
+    const meridiem = m[3];
+    if (h > 23 || mi > 59) return null;
+    if (meridiem) {
+      if (meridiem === 'pm' && h < 12) h += 12;
+      if (meridiem === 'am' && h === 12) h = 0;
+    }
+    return `${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}`;
+  }
+
+  _minutosDelDia(hora) {
+    const partes = String(hora || '').split(':').map(Number);
+    if (partes.length < 2 || partes.some(isNaN)) return null;
+    return partes[0] * 60 + partes[1];
+  }
+
+  async _crearEventoFinal(userId, data) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const fechaISO = String(data.fechaevento).slice(0, 10);
+
+      // 1️⃣ Límite: máximo 2 eventos por día y sin conflicto de hora (2h)
+      const { rows: eventosDelDia } = await client.query(
+        `SELECT idevento, horaevento FROM evento
+         WHERE CAST(fechaevento AS DATE) = CAST($1 AS DATE)
+           AND estado IN ('pendiente', 'aprobado')
+         ORDER BY horaevento ASC`,
+        [fechaISO]
+      );
+
+      if (eventosDelDia.length >= 2) {
+        await client.query('ROLLBACK');
+        return { respuesta: `⚠️ El día ${fechaISO} ya tiene 2 eventos programados (máximo permitido por día). Elige otra fecha: escribe "crear evento".` };
+      }
+
+      const minNueva = this._minutosDelDia(data.horaevento);
+      const conflictoHora = eventosDelDia.find(e => {
+        const minExistente = this._minutosDelDia(e.horaevento);
+        return minNueva !== null && minExistente !== null && Math.abs(minNueva - minExistente) < 120;
+      });
+      if (conflictoHora) {
+        await client.query('ROLLBACK');
+        return { respuesta: '⚠️ Ya existe un evento pendiente o aprobado el mismo día a la misma hora (rango de 2 horas). Elige otra hora: escribe "crear evento".' };
+      }
+
+      // 2️⃣ Crear evento principal
+      const { rows: [ev] } = await client.query(
+        `INSERT INTO evento (nombreevento, lugarevento, fechaevento, horaevento, idacademico, evento_externo, estado, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, false, 'pendiente', NOW(), NOW())
+         RETURNING idevento`,
+        [data.nombreevento, data.lugarevento, fechaISO, data.horaevento, userId]
+      );
+
+      // 3️⃣ Asignar fase inicial
+      const { rows: [fase] } = await client.query('SELECT idfase FROM fase WHERE nrofase = 1 LIMIT 1');
+      if (fase) {
+        await client.query('UPDATE evento SET idfase = $1 WHERE idevento = $2', [fase.idfase, ev.idevento]);
+      }
+
+      // 4️⃣ Resultados esperados
+      await client.query(
+        'INSERT INTO resultado (idevento, participacion_esperada, satisfaccion_esperada, otros_resultados) VALUES ($1, 0, NULL, NULL)',
+        [ev.idevento]
+      );
+
+      await client.query('COMMIT');
+
+      return {
+        respuesta: `🎉 <b>¡Evento creado exitosamente!</b>\n\n📝 Nombre: ${data.nombreevento}\n📅 Fecha: ${fechaISO}\n⏰ Hora: ${data.horaevento}\n📍 Lugar: ${data.lugarevento}\n🆔 ID: ${ev.idevento}\n\n⏳ Estado: <b>Pendiente de aprobación</b>.\n\n¿Quieres crear otro? Escribe "crear evento".`,
+      };
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch (e) { /* rollback ya hecho */ }
+      console.error('❌ Error creando evento desde chat:', error);
+      return { respuesta: '❌ Ocurrió un error al crear el evento. Intenta de nuevo en unos segundos.' };
+    } finally {
+      client.release();
+    }
+  }
+
   // ─── Main: generar respuesta ──────────────────────────────────────────────
   // ─── Clasificador por palabras clave (determinístico, confiable) ─────────
   _detectarCategoria(palabras) {
@@ -461,6 +678,8 @@ class ChatBotService {
       enviar_telegram: ['telegram', 'enviar', 'mandar', 'enviame'],
       // SUGERENCIAS
       sugerencia: ['sugerencia', 'sugerir', 'recomendar', 'consejo', 'deberia', 'que hago'],
+      // CREAR EVENTO
+      crear_evento: ['crear', 'proyectar', 'agendar', 'organizar'],
     };
 
     let mejorCategoria = null;
@@ -493,6 +712,33 @@ class ChatBotService {
 
       const userInfo = (userId && userId !== 'null' && userId !== 'undefined')
         ? await this.getUserInfo(userId) : null;
+
+      // ── CREAR EVENTO: continuar sesión en curso ──
+      const userIdKey = (userId && userId !== 'null' && userId !== 'undefined' && !isNaN(Number(userId)))
+        ? String(userId) : null;
+
+      if (userIdKey && this.sesionesCreacion.has(userIdKey)) {
+        const paso = await this._continuarCreacion(userIdKey, pregunta);
+        return {
+          success: true,
+          respuesta: paso.respuesta,
+          modelo: 'Asistente Creación de Eventos',
+          confianza: 'Alta (flujo conversacional)',
+          categoria: 'crear_evento',
+        };
+      }
+
+      // ── CREAR EVENTO: nueva intención ──
+      if (userIdKey && this._esIntencionCrearEvento(preguntaLower)) {
+        const inicio = await this._iniciarCreacion(userIdKey, pregunta);
+        return {
+          success: true,
+          respuesta: inicio.respuesta,
+          modelo: 'Asistente Creación de Eventos',
+          confianza: 'Alta (keywords)',
+          categoria: 'crear_evento',
+        };
+      }
 
       // 1️⃣ Primero el clasificador por palabras clave (determinístico)
       const categoriaKeyword = this._detectarCategoria(palabras);
@@ -825,6 +1071,7 @@ class ChatBotService {
         let r = `¡Hola! 👋 Soy tu asistente virtual`;
         if (ev) r += ` del evento "${ev.nombreevento || ''}"`;
         r += `. Puedo ayudarte con:\n\n`;
+        r += `➕ Crear evento:\n  • "Crear evento" — Registrar un nuevo evento\n\n`;
         r += `📋 Quick Actions:\n  • "Resumen del día"\n  • "Qué tengo pendiente"\n  • "Eventos cercanos"\n  • "Sugerencias"\n\n`;
         r += `📊 Reports:\n  • "Reporte del evento"\n  • "Eventos cerrados"\n\n`;
         r += `📱 Telegram:\n  • "Enviar resumen por Telegram"\n  • "Enviar reporte por Telegram"\n\n`;
@@ -841,6 +1088,7 @@ class ChatBotService {
 
       case 'ayuda': {
         let r = `💡 TODO lo que puedo hacer:\n\n`;
+        r += `➕ CREAR EVENTO:\n  • "Crear evento" — Guiado para registrar un nuevo evento\n\n`;
         r += `📋 QUICK ACTIONS:\n  • "Resumen del día" — Tu resumen rápido\n`;
         r += `  • "Qué tengo pendiente" — Eventos esperando\n`;
         r += `  • "Eventos cercanos" — Próximos 7 días\n`;

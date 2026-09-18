@@ -951,12 +951,14 @@ Ejemplo: <code>juan.perez@unifranz.edu.bo</code>
 • /comite - Eventos donde eres comité
 • /resumen - Resumen completo con estadísticas
 • /ficha_pdf - Descargar ficha en PDF
+• /crear - Crear un nuevo evento (asistido)
 • /estado - Verificar vinculación
 • /desvincular - Desvincular cuenta de Telegram
 • /ayuda - Mostrar ayuda
 
 <b>🤖 Asistente IA:</b>
 También puedes escribirme en lenguaje natural:
+• "Crear evento"
 • "Resumen del día"
 • "Qué tengo pendiente"
 • "Reporte del evento X"
@@ -1275,6 +1277,7 @@ Usa /mis_eventos, /pendientes, /rechazados o /comite para ver detalles.`;
 • /comite - Eventos donde eres comité
 • /resumen - Resumen completo con estadísticas
 • /ficha_pdf - Descargar ficha en PDF
+• /crear - Crear un nuevo evento (asistido)
 
 <b>🤖 Asistente IA (escribe libremente):</b>
 • "Resumen del día" — Tu resumen rápido
@@ -1402,6 +1405,34 @@ Si quieres volver a vincular tu cuenta, envía tu email institucional.`;
         chat_id: chatId,
         text: successMessage,
         parse_mode: 'HTML'
+      });
+
+      return res.status(200).send('OK');
+    }
+
+    if (comando === '/crear') {
+      const models = getModels();
+      const { User } = models;
+
+      const usuario = await User.findOne({ 
+        where: { telegram_chat_id: chatId.toString() } 
+      });
+
+      if (!usuario) {
+        await axios.post(`${TELEGRAM_API}/sendMessage`, {
+          chat_id: chatId,
+          text: '❌ Tu cuenta no está vinculada.\n\nEnvía tu email institucional para vincularla.',
+        });
+        return res.status(200).send('OK');
+      }
+
+      const pregunta = chatBotService.extraerPregunta('crear evento');
+      const respuesta = await chatBotService.generarRespuesta(pregunta, null, usuario.idusuario);
+
+      await axios.post(`${TELEGRAM_API}/sendMessage`, {
+        chat_id: chatId,
+        text: respuesta.respuesta || 'Escribe "crear evento" para empezar.',
+        parse_mode: 'HTML',
       });
 
       return res.status(200).send('OK');
