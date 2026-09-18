@@ -7,7 +7,13 @@ const { PassThrough } = require('stream');
 const FormData = require('form-data');
 const chatBotService = require('../services/chatBotService');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+if (!GEMINI_API_KEY) {
+  console.error('❌❌❌ GEMINI_API_KEY NO CONFIGURADA EN VARIABLES DE ENTORNO ❌❌❌');
+} else {
+  console.log('✅ GEMINI_API_KEY cargada:', GEMINI_API_KEY.substring(0, 10) + '...');
+}
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY || 'dummy-key');
 const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}`;
 
 const getEventosAprobadosForBot = async (usuarioId, userRole) => {
@@ -522,7 +528,53 @@ async function generarPDFEvento(evento, usuario) {
   });
 }
 
+function responderPorKeywords(mensaje, eventosContexto) {
+  const msg = mensaje.toLowerCase().trim();
+  
+  if (/^(hola|buenas|buenos|buenas tardes|buenos dias|hey|hi)\b/.test(msg)) {
+    return '¡Hola! 👋 Soy tu asistente de eventos UNIFRANZ. Puedes preguntarme:\n• "¿Qué tengo pendiente?"\n• "Resumen del día"\n• "Eventos cercanos"\n• "Crear evento"\n• "Ayuda"';
+  }
+  
+  if (/\b(ayuda|comandos|qué puedes|que puedes)\b/.test(msg)) {
+    return '📋 **Comandos disponibles:**\n• **Pendientes** - Eventos esperando aprobación\n• **Resumen** - Resumen general de tus eventos\n• **Cercanos / Próximos** - Eventos de los próximos 7 días\n• **Crear evento** - Asistente paso a paso\n• **Reporte [nombre]** - Detalle de un evento\n• **Cerrados / Historial** - Eventos pasados';
+  }
+
+  if (/\b(pendiente|pendientes|esperando|aprobaci[oó]n)\b/.test(msg)) {
+    const match = eventosContexto.match(/Pendientes?:?\s*(\d+)/i);
+    const count = match ? match[1] : 'varios';
+    return `⏳ Tienes **${count} evento(s) pendiente(s)** de aprobación.\n\nUsa "Resumen" para ver el detalle completo.`;
+  }
+
+  if (/\b(resumen|resume|general|estad[ií]sticas?)\b/.test(msg)) {
+    const aprobados = (eventosContexto.match(/Aprobados?:?\s*(\d+)/i) || [])[1] || '0';
+    const pendientes = (eventosContexto.match(/Pendientes?:?\s*(\d+)/i) || [])[1] || '0';
+    const rechazados = (eventosContexto.match(/Rechazados?:?\s*(\d+)/i) || [])[1] || '0';
+    return `📊 **Resumen de tu actividad:**\n✅ Aprobados: ${aprobados}\n⏳ Pendientes: ${pendientes}\n❌ Rechazados: ${rechazados}\n\nPregunta "pendientes" o "cercanos" para más detalle.`;
+  }
+
+  if (/\b(cercano|pr[oó]xim|pr[oó]ximos|semana|7 d[ií]as|pr[oó]ximamente)\b/.test(msg)) {
+    return '📅 **Eventos próximos (7 días):**\nConsultando base de datos...\n\n(Si tienes eventId en contexto, dime "evento actual" para ver sus detalles)';
+  }
+
+  if (/\b(crear|nuevo|registrar)\b/.test(msg) && /\b(evento|actividad)\b/.test(msg)) {
+    return '➕ **Crear evento** - Te guiaré paso a paso:\n1. Nombre del evento\n2. Fecha (mín. 2 semanas)\n3. Hora\n4. Lugar\n5. Clasificación\n\nEscribe "Crear evento" para empezar.';
+  }
+
+  if (/\b(cerrad[oa]|historial|pasad[oa]|finalizad[oa]|terminad[oa])\b/.test(msg)) {
+    return '📜 **Eventos cerrados / Historial:**\nConsultando eventos finalizados...\n\nFiltra por: "aprobados", "rechazados" o "todos".';
+  }
+
+  if (/\b(reporte|detalle|informaci[oó]n)\b/.test(msg)) {
+    return '📋 **Reporte de evento:**\nDime el nombre o ID del evento para mostrar su ficha completa.\n\nEjemplo: "Reporte Congreso Médico"';
+  }
+
+  return null;
+}
+
 async function askGemini(userMessage, senderInfo = 'Invitado', eventosContexto = "", history = []) {
+  const respuestaRapida = responderPorKeywords(userMessage, eventosContexto);
+  if (respuestaRapida) return respuestaRapida;
+
   const SYSTEM_PROMPT = `Eres el asistente virtual de gestión de eventos de la UNIFRANZ.
 📌 REGLAS:
 - Responde SOLO con la información del contexto proporcionado.
@@ -547,7 +599,7 @@ ${eventosContexto || "Sin eventos activos en este momento."}`;
     parts: [{ text: userMessage }]
   });
 
-  for (const modelName of ['gemini-2.0-flash', 'gemini-1.5-flash']) {
+  for (const modelName of ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.5-flash-latest']) {
     try {
       const model = genAI.getGenerativeModel({ 
         model: modelName,
@@ -558,7 +610,8 @@ ${eventosContexto || "Sin eventos activos en este momento."}`;
       return result.response.text();
       
     } catch (err) {
-      console.warn(`⚠️ Fallo con ${modelName}:`, err.message);
+      console.error(`❌ Error con ${modelName}:`, err.message);
+      console.error(`❌ Stack:`, err.stack);
       if (err.message?.includes('systemInstruction')) {
         try {
           const model = genAI.getGenerativeModel({ model: modelName });
@@ -569,14 +622,14 @@ ${eventosContexto || "Sin eventos activos en este momento."}`;
           const result = await model.generateContent({ contents: fallbackContents });
           return result.response.text();
         } catch (fallbackErr) {
-          console.warn(`⚠️ Fallback también falló para ${modelName}`);
+          console.error(`❌ Fallback también falló para ${modelName}:`, fallbackErr.message);
           continue;
         }
       }
       continue;
     }
   }
-  return "⚠️ Servicio temporalmente ocupado. Intenta en unos segundos.";
+  return "⚠️ Servicio temporalmente ocupado. Intenta en unos segundos. (Ver logs del servidor para detalles)";
 }
 
 function getMessage() {
