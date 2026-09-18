@@ -539,16 +539,22 @@ function responderPorKeywords(mensaje, eventosContexto) {
     return '📋 **Comandos disponibles:**\n• **Pendientes** - Eventos esperando aprobación\n• **Resumen** - Resumen general de tus eventos\n• **Cercanos / Próximos** - Eventos de los próximos 7 días\n• **Crear evento** - Asistente paso a paso\n• **Reporte [nombre]** - Detalle de un evento\n• **Cerrados / Historial** - Eventos pasados';
   }
 
-  if (/\b(pendiente|pendientes|esperando|aprobaci[oó]n)\b/.test(msg)) {
-    const match = eventosContexto.match(/Pendientes?:?\s*(\d+)/i);
-    const count = match ? match[1] : 'varios';
+  function extraerNumero(contexto, label) {
+  // Busca "Label: 5" o "📊 Label: 5" o "⏳ Label: 5" etc.
+  const regex = new RegExp(`${label}\\s*:\\s*(\\d+)`, 'i');
+  const match = contexto.match(regex);
+  return match ? match[1] : '0';
+}
+
+if (/\b(pendiente|pendientes|esperando|aprobaci[oó]n)\b/.test(msg)) {
+    const count = extraerNumero(eventosContexto, 'Pendientes');
     return `⏳ Tienes **${count} evento(s) pendiente(s)** de aprobación.\n\nUsa "Resumen" para ver el detalle completo.`;
   }
 
   if (/\b(resumen|resume|general|estad[ií]sticas?)\b/.test(msg)) {
-    const aprobados = (eventosContexto.match(/Aprobados?:?\s*(\d+)/i) || [])[1] || '0';
-    const pendientes = (eventosContexto.match(/Pendientes?:?\s*(\d+)/i) || [])[1] || '0';
-    const rechazados = (eventosContexto.match(/Rechazados?:?\s*(\d+)/i) || [])[1] || '0';
+    const aprobados = extraerNumero(eventosContexto, 'Aprobados');
+    const pendientes = extraerNumero(eventosContexto, 'Pendientes');
+    const rechazados = extraerNumero(eventosContexto, 'Rechazados');
     return `📊 **Resumen de tu actividad:**\n✅ Aprobados: ${aprobados}\n⏳ Pendientes: ${pendientes}\n❌ Rechazados: ${rechazados}\n\nPregunta "pendientes" o "cercanos" para más detalle.`;
   }
 
@@ -599,7 +605,7 @@ ${eventosContexto || "Sin eventos activos en este momento."}`;
     parts: [{ text: userMessage }]
   });
 
-  for (const modelName of ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.5-flash-latest']) {
+  for (const modelName of ['gemini-1.5-flash']) {
     try {
       const model = genAI.getGenerativeModel({ 
         model: modelName,
