@@ -1,4 +1,25 @@
-async _continuarCreacion(userId, pregunta) {
+const chatBotService = {
+  sesionesCreacion: new Map(),
+
+  extraerPregunta(mensaje) {
+    const trimmed = mensaje.trim().toLowerCase();
+    if (/^(crear evento|crear|nuevo evento)\b/.test(trimmed)) {
+      return 'crear evento';
+    }
+    if (/^(cancelar|cancela|cancel|detener|parar|salir)\b/.test(trimmed)) {
+      return 'cancelar';
+    }
+    return trimmed;
+  },
+
+  generarRespuesta(pregunta, eventId, userId) {
+    if (pregunta === 'crear evento') {
+      return this._continuarCreacion(userId, pregunta);
+    }
+    return { respuesta: 'No entendí tu pregunta. Escribe "crear evento" para empezar.' };
+  },
+
+  async _continuarCreacion(userId, pregunta) {
     const sesion = this.sesionesCreacion.get(userId);
     const { step, data } = sesion;
     const t = pregunta.trim();
@@ -138,4 +159,48 @@ async _continuarCreacion(userId, pregunta) {
         this.sesionesCreacion.delete(userId);
         return { respuesta: '⚠️ Algo salió mal con la sesión. Escribe "crear evento" para empezar de nuevo.' };
     }
+  },
+
+  _fechaLocal(dias) {
+    const fecha = new Date();
+    fecha.setDate(fecha.getDate() + dias);
+    return fecha;
+  },
+
+  _obtenerFechasDisponibles() {
+    // Placeholder - implementa según tu lógica real
+    return [];
+  },
+
+  _parseFecha(texto) {
+    // Placeholder - implementa según tu lógica real
+    return null;
+  },
+
+  _mensajeFechasDisponibles(fechas) {
+    // Placeholder - implementa según tu lógica real
+    return '';
+  },
+
+  _diaTieneCupo(fecha) {
+    // Placeholder - implementa según tu lógica real
+    return Promise.resolve(true);
+  },
+
+  _fmtFechaLarga(fecha) {
+    // Placeholder - implementa según tu lógica real
+    return fecha.toString();
+  },
+
+  _subcategorias(idClasificacion) {
+    // Placeholder - implementa según tu lógica real
+    return [];
+  },
+
+  async _crearEventoFinal(userId, data) {
+    // Placeholder - implementa según tu lógica real
+    return { respuesta: 'Evento creado correctamente' };
   }
+};
+
+module.exports = chatBotService;

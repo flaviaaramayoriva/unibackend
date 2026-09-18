@@ -351,6 +351,86 @@ const getReporteRecursos = async (req, res) => {
        LIMIT 8`, { replacements: replacements || undefined, type: sequelize.QueryTypes.SELECT }
     );
 
+    const topInscripciones = await sequelize.query(
+      `SELECT e.idevento, e.nombreevento, COALESCE(f.nombre_facultad, 'Sin facultad') AS facultad,
+              COUNT(ei.idestudiante)::int AS inscritos
+       FROM evento_inscripciones ei
+       JOIN evento e ON e.idevento = ei.idevento
+       LEFT JOIN academico a ON a.idacademico = e.idacademico
+       LEFT JOIN facultad f ON f.facultad_id = a.facultad_id
+       ${where}
+       GROUP BY e.idevento, e.nombreevento, f.nombre_facultad
+       ORDER BY inscritos DESC
+       LIMIT 10`, { replacements, type: sequelize.QueryTypes.SELECT }
+    );
+
+    const porFacultadInscripciones = await sequelize.query(
+      `SELECT COALESCE(f.nombre_facultad, 'Sin facultad') AS facultad,
+              COUNT(ei.idestudiante)::int AS inscritos
+       FROM evento_inscripciones ei
+       JOIN evento e ON e.idevento = ei.idevento
+       LEFT JOIN academico a ON a.idacademico = e.idacademico
+       LEFT JOIN facultad f ON f.facultad_id = a.facultad_id
+       ${where}
+       GROUP BY f.nombre_facultad
+       ORDER BY inscritos DESC`, { replacements, type: sequelize.QueryTypes.SELECT }
+    );
+
+    const porMesInscripciones = await sequelize.query(
+      `SELECT TO_CHAR(COALESCE(
+         ${safeDate('ei.fecha_inscripcion')},
+         ${safeDate('e.fechaevento')}
+       ), 'YYYY-MM') AS mes,
+               COUNT(*)::int AS inscritos
+       FROM evento_inscripciones ei
+       JOIN evento e ON e.idevento = ei.idevento
+       ${where}
+       GROUP BY 1
+       ORDER BY 1 ASC`, { replacements, type: sequelize.QueryTypes.SELECT }
+    );
+
+    const porTipoEvento = await sequelize.query(
+      `SELECT te.idtipoevento, COALESCE(te.nombretipo, 'Sin tipo') AS tipo,
+              COUNT(et.idtipoevento)::int AS total
+       FROM evento_tipos et
+       JOIN tipos_de_evento te ON te.idtipoevento = et.idtipoevento
+       JOIN evento e ON e.idevento = et.idevento
+       ${where}
+       GROUP BY te.idtipoevento, te.nombretipo
+       ORDER BY total DESC
+       LIMIT 12`, { replacements, type: sequelize.QueryTypes.SELECT }
+    );
+
+    const tiempoAprobacion = await sequelize.query(
+      `SELECT TO_CHAR(x.fa, 'YYYY-MM') AS mes,
+              ROUND(AVG(EXTRACT(EPOCH FROM (x.fa - x.ca)) / 3600))::int AS horas
+       FROM (
+         SELECT ${safeDate('e.fecha_aprobacion')} AS fa,
+                ${safeDate('e.created_at')}       AS ca
+         FROM evento e
+         ${where}
+       ) x
+       WHERE x.fa IS NOT NULL AND x.ca IS NOT NULL
+       GROUP BY 1
+       ORDER BY 1 ASC`, { replacements: replacements || undefined, type: sequelize.QueryTypes.SELECT }
+    );
+
+    const porEstado = await sequelize.query(
+      `SELECT COALESCE(e.estado, 'sin_estado') AS estado, COUNT(*)::int AS total
+       FROM evento e
+       ${where}
+       GROUP BY 1
+       ORDER BY total DESC`, { replacements: replacements || undefined, type: sequelize.QueryTypes.SELECT }
+    );
+
+    const porFase = await sequelize.query(
+      `SELECT COALESCE(e.idfase, 0)::int AS idfase, COUNT(*)::int AS total
+       FROM evento e
+       ${where}
+       GROUP BY 1
+       ORDER BY 1 ASC`, { replacements: replacements || undefined, type: sequelize.QueryTypes.SELECT }
+    );
+
     res.status(200).json({
       totalSolicitudes: counts.totalSolicitudes || 0,
       aprobadas: counts.aprobadas || 0,
@@ -360,6 +440,13 @@ const getReporteRecursos = async (req, res) => {
       pendientes: counts.pendientes || 0,
       recursosMasUsados,
       eventoRecientes,
+      topInscripciones,
+      porFacultadInscripciones,
+      porMesInscripciones,
+      porTipoEvento,
+      tiempoAprobacion,
+      porEstado,
+      porFase,
     });
   } catch (err) {
     console.error('? Error getReporteRecursos:', err.message);
