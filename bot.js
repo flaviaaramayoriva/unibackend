@@ -88,7 +88,7 @@ const deleteWebhookFirst = (token) => {
 // ─────────────────────────────────────────
 const startTelegramBot = async () => {
   const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-  const API_BASE_URL   = process.env.API_BASE_URL;
+  const API_BASE_URL   = process.env.API_BASE_URL || 'https://unibackend-production-a0f8.up.railway.app';
   
   if (!TELEGRAM_TOKEN) {
     console.error('❌ Falta TELEGRAM_TOKEN en .env');
@@ -112,8 +112,8 @@ const startTelegramBot = async () => {
     console.log('🧹 Webhook anterior eliminado y cola limpiada.');
 
     // ✅ 3. Establecer el nuevo webhook
-    await bot.setWebhook(`${API_BASE_URL}/webhook/${TELEGRAM_TOKEN}`);
-    console.log(`🔗 Webhook establecido en: ${API_BASE_URL}/webhook/...`);
+    await bot.setWebhook(`${API_BASE_URL}/bot/telegram/webhook`);
+    console.log(`🔗 Webhook establecido en: ${API_BASE_URL}/bot/telegram/webhook`);
     
     _botInstance = bot;
     console.log('🤖 Bot de Telegram iniciado exitosamente en modo WEBHOOK.');

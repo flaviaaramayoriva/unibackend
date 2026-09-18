@@ -159,8 +159,11 @@ const startServer = async () => {
     });
     await iniciarCronJobs(); 
     iniciarRecordatorios();
+    
+    const { startTelegramBot } = require('./bot.js');
+    await startTelegramBot();
+    
     console.log('🤖 Servicios de notificaciones iniciados');
-
   } catch (err) {
     console.error('❌ Error crítico al iniciar:', err);
     if (err.name === 'SequelizeConnectionError') {
@@ -168,8 +171,6 @@ const startServer = async () => {
     }
     process.exit(1);
   }
-  iniciarRecordatorios();
-  console.log('🤖 Servicios de notificaciones iniciados');
 };
 
 startServer();

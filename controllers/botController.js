@@ -578,8 +578,14 @@ if (/\b(pendiente|pendientes|esperando|aprobaci[oó]n)\b/.test(msg)) {
 }
 
 async function askGemini(userMessage, senderInfo = 'Invitado', eventosContexto = "", history = []) {
+  console.log('🔍 [askGemini] Mensaje:', userMessage);
+  
   const respuestaRapida = responderPorKeywords(userMessage, eventosContexto);
-  if (respuestaRapida) return respuestaRapida;
+  if (respuestaRapida) {
+    console.log('✅ [askGemini] Respuesta por keywords:', respuestaRapida.substring(0, 80));
+    return respuestaRapida;
+  }
+  console.log('⚠️ [askGemini] Sin match en keywords, intentando Gemini...');
 
   const SYSTEM_PROMPT = `Eres el asistente virtual de gestión de eventos de la UNIFRANZ.
 📌 REGLAS:
@@ -633,7 +639,11 @@ ${eventosContexto || "Sin eventos activos en este momento."}`;
       }
     }
   }
-  return "⚠️ Servicio temporalmente ocupado. Intenta en unos segundos. (Ver logs del servidor para detalles)";
+  // Fallback final: respuesta útil basada en keywords genéricos
+  const msgLower = userMessage.toLowerCase();
+  if (msgLower.includes('hola') || msgLower.includes('buenas')) return '¡Hola! ¿En qué te ayudo? Prueba: "pendientes", "resumen", "crear evento".';
+  if (msgLower.includes('gracias')) return '¡De nada! 😊 ¿Algo más en lo que ayude?';
+  return 'No pude conectar con la IA. Comandos rápidos: "pendientes", "resumen", "próximos", "crear evento", "ayuda".';
 }
 
 function getMessage() {
@@ -1507,18 +1517,36 @@ Si quieres volver a vincular tu cuenta, envía tu email institucional.`;
 
     // ── Conversación IA (texto libre no reconocido) ──
     const models = getModels();
-    const { User } = models;
+    const { User, Evento } = models;
     const usuario = await User.findOne({ where: { telegram_chat_id: chatId.toString() } });
 
-    const pregunta = chatBotService.extraerPregunta(text);
-    const respuesta = await chatBotService.generarRespuesta(pregunta, null, usuario?.idusuario || null);
+    let eventosContexto = "";
+    if (Evento && usuario) {
+      const [aprobados, pendientes, rechazados] = await Promise.all([
+        Evento.count({ where: { estado: 'aprobado', idacademico: usuario.idusuario } }),
+        Evento.count({ where: { estado: 'pendiente', idacademico: usuario.idusuario } }),
+        Evento.count({ where: { estado: 'rechazado', idacademico: usuario.idusuario } })
+      ]);
+      const lista = await Evento.findAll({ 
+        where: { estado: 'aprobado', idacademico: usuario.idusuario }, 
+        limit: 4, 
+        attributes: ['nombreevento', 'fechaevento', 'estado'] 
+      });
+      if (lista.length > 0) {
+        eventosContexto = `Tus eventos aprobados:\n` + lista.map(e => 
+          `- ${e.nombreevento} (${e.fechaevento}) [${e.estado}]`
+        ).join('\n');
+      }
+      eventosContexto += `\n\n📊 ESTADÍSTICAS:\n✅ Aprobados: ${aprobados}\n⏳ Pendientes: ${pendientes}\n❌ Rechazados: ${rechazados}`;
+    }
 
-    let reply = respuesta.respuesta || 'No entendí. Usa /ayuda para ver los comandos.';
-    if (reply.length > 4000) reply = reply.substring(0, 4000) + '...';
+    const reply = await askGemini(text, usuario?.nombre || 'Usuario', eventosContexto, []);
+    
+    const finalReply = reply.length > 4000 ? reply.substring(0, 4000) + '...' : reply;
 
     await axios.post(`${TELEGRAM_API}/sendMessage`, {
       chat_id: chatId,
-      text: reply,
+      text: finalReply,
       parse_mode: 'HTML',
     });
 
