@@ -131,6 +131,14 @@ module.exports = (io) => {
     socket.on('send_private', async ({ roomId, userId, userName, role, message }) => {
       console.log('📩 [PRIVADO] Enviando mensaje:', { roomId, userId, userName, message });
       
+      io.to(roomId).emit('private_message', {
+        userId: parseInt(userId),
+        userName: userName || 'Usuario',
+        role,
+        message,
+        timestamp: new Date().toISOString()
+      });
+
       try {
         const { getModels } = require('../models');
         const { ChatMensaje } = getModels();
@@ -144,19 +152,11 @@ module.exports = (io) => {
           room_id: roomId,
         });
 
-        io.to(roomId).emit('private_message', {
-          userId: parseInt(userId),
-          userName: userName || 'Usuario',
-          role,
-          message,
-          timestamp: new Date().toISOString()
-        });
-
         notificarSala(io, { roomId, userId, userName, role, message });
-        console.log(`✅ [PRIVADO] Mensaje emitido a sala ${roomId}`);
+        console.log(`✅ [PRIVADO] Mensaje guardado y emitido a sala ${roomId}`);
       } catch (e) {
-        console.error('❌ [PRIVADO] Error:', e.message);
-        socket.emit('error', { message: 'Error: ' + e.message });
+        console.error('❌ [PRIVADO] Error guardando en BD:', e.message);
+        notificarSala(io, { roomId, userId, userName, role, message });
       }
     });
 
