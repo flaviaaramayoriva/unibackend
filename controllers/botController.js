@@ -531,49 +531,16 @@ async function generarPDFEvento(evento, usuario) {
 function responderPorKeywords(mensaje, eventosContexto) {
   const msg = mensaje.toLowerCase().trim();
   
+  // Solo saludos básicos y ayuda - TODO lo demás va a Gemini con contexto rico
   if (/^(hola|buenas|buenos|buenas tardes|buenos dias|hey|hi)\b/.test(msg)) {
-    return '¡Hola! 👋 Soy tu asistente de eventos UNIFRANZ. Puedes preguntarme:\n• "¿Qué tengo pendiente?"\n• "Resumen del día"\n• "Eventos cercanos"\n• "Crear evento"\n• "Ayuda"';
+    return '¡Hola! 👋 Soy tu asistente de eventos UNIFRANZ. Tengo acceso a tus eventos reales. Pregúntame:\n• "¿Qué eventos tengo pendientes?"\n• "Muéstrame mis eventos aprobados"\n• "Resumen de mis eventos"\n• "Eventos rechazados y motivos"\n• "Crear evento"\n• "Próximos eventos"';
   }
   
   if (/\b(ayuda|comandos|qué puedes|que puedes)\b/.test(msg)) {
-    return '📋 **Comandos disponibles:**\n• **Pendientes** - Eventos esperando aprobación\n• **Resumen** - Resumen general de tus eventos\n• **Cercanos / Próximos** - Eventos de los próximos 7 días\n• **Crear evento** - Asistente paso a paso\n• **Reporte [nombre]** - Detalle de un evento\n• **Cerrados / Historial** - Eventos pasados';
+    return '📋 **Puedo ayudarte con:**\n• Ver tus eventos pendientes, aprobados, rechazados (con detalles reales)\n• Resumen completo con fechas, lugares, motivos\n• Crear eventos paso a paso\n• Sugerencias según tu situación\n• Reportes de eventos específicos\n\nEscribe en lenguaje natural, ej: "¿Qué tengo para la próxima semana?"';
   }
 
-  function extraerNumero(contexto, label) {
-  // Busca "Label: 5" o "📊 Label: 5" o "⏳ Label: 5" etc.
-  const regex = new RegExp(`${label}\\s*:\\s*(\\d+)`, 'i');
-  const match = contexto.match(regex);
-  return match ? match[1] : '0';
-}
-
-if (/\b(pendiente|pendientes|esperando|aprobaci[oó]n)\b/.test(msg)) {
-    const count = extraerNumero(eventosContexto, 'Pendientes');
-    return `⏳ Tienes **${count} evento(s) pendiente(s)** de aprobación.\n\nUsa "Resumen" para ver el detalle completo.`;
-  }
-
-  if (/\b(resumen|resume|general|estad[ií]sticas?)\b/.test(msg)) {
-    const aprobados = extraerNumero(eventosContexto, 'Aprobados');
-    const pendientes = extraerNumero(eventosContexto, 'Pendientes');
-    const rechazados = extraerNumero(eventosContexto, 'Rechazados');
-    return `📊 **Resumen de tu actividad:**\n✅ Aprobados: ${aprobados}\n⏳ Pendientes: ${pendientes}\n❌ Rechazados: ${rechazados}\n\nPregunta "pendientes" o "cercanos" para más detalle.`;
-  }
-
-  if (/\b(cercano|pr[oó]xim|pr[oó]ximos|semana|7 d[ií]as|pr[oó]ximamente)\b/.test(msg)) {
-    return '📅 **Eventos próximos (7 días):**\nConsultando base de datos...\n\n(Si tienes eventId en contexto, dime "evento actual" para ver sus detalles)';
-  }
-
-  if (/\b(crear|nuevo|registrar)\b/.test(msg) && /\b(evento|actividad)\b/.test(msg)) {
-    return '➕ **Crear evento** - Te guiaré paso a paso:\n1. Nombre del evento\n2. Fecha (mín. 2 semanas)\n3. Hora\n4. Lugar\n5. Clasificación\n\nEscribe "Crear evento" para empezar.';
-  }
-
-  if (/\b(cerrad[oa]|historial|pasad[oa]|finalizad[oa]|terminad[oa])\b/.test(msg)) {
-    return '📜 **Eventos cerrados / Historial:**\nConsultando eventos finalizados...\n\nFiltra por: "aprobados", "rechazados" o "todos".';
-  }
-
-  if (/\b(reporte|detalle|informaci[oó]n)\b/.test(msg)) {
-    return '📋 **Reporte de evento:**\nDime el nombre o ID del evento para mostrar su ficha completa.\n\nEjemplo: "Reporte Congreso Médico"';
-  }
-
+  // NO interceptar más - dejar que Gemini use el contexto rico
   return null;
 }
 
@@ -588,14 +555,18 @@ async function askGemini(userMessage, senderInfo = 'Invitado', eventosContexto =
   console.log('⚠️ [askGemini] Sin match en keywords, intentando Gemini...');
 
   const SYSTEM_PROMPT = `Eres el asistente virtual de gestión de eventos de la UNIFRANZ.
-📌 REGLAS:
-- Responde SOLO con la información del contexto proporcionado.
-- Si falta un dato, di: "No tengo información actualizada sobre [tema]".
-- Sé conciso (máx 3-4 líneas). Usa formato claro.
-- No inventes fechas, responsables ni estados.
+📌 REGLAS ESTRICTAS:
+- Responde SOLO con la información del CONTEXTO proporcionado abajo.
+- El contexto contiene TUS eventos reales con: ID, nombre, fecha, hora, lugar, descripción, motivo de rechazo.
+- Si el usuario pide "pendientes", "aprobados", "rechazados" → LISTA los eventos de esa sección del contexto.
+- Si pide "resumen" → USA los datos del contexto (cuentas + detalles).
+- Si pide "próximos" → FILTRA eventos aprobados por fecha cercana.
+- Si pregunta por evento específico → BUSCA en el contexto por nombre/ID.
+- NUNCA inventes datos. Si no está en el contexto, di: "No tengo esa información en tus eventos actuales".
+- Formato: usa **negrita** para nombres, 📅 fecha, ⏰ hora, 📍 lugar, 💬 motivo.
 
-📊 CONTEXTO DEL SISTEMA:
-${eventosContexto || "Sin eventos activos en este momento."}`;
+📊 CONTEXTO DEL SISTEMA (TUS EVENTOS REALES):
+${eventosContexto || "Sin eventos registrados."}`;
 
   const contents = [];
   
@@ -611,31 +582,42 @@ ${eventosContexto || "Sin eventos activos en este momento."}`;
     parts: [{ text: userMessage }]
   });
 
-  for (const modelName of ['gemini-1.5-flash', 'gemini-1.5-flash-001', 'gemini-1.5-pro-001', 'gemini-1.5-pro']) {
-    try {
-      const model = genAI.getGenerativeModel({ 
-        model: modelName,
-        systemInstruction: SYSTEM_PROMPT
-      });
+  const modelCandidates = [
+    'gemini-1.5-flash',
+    'gemini-1.5-flash-8b',
+    'gemini-1.5-pro',
+    'gemini-2.0-flash-exp',
+  ];
 
-      const result = await model.generateContent({ contents });
-      return result.response.text();
-      
-    } catch (err) {
-      console.error(`❌ Error con ${modelName}:`, err.message);
-      
-      // Fallback sin systemInstruction para CUALQUIER error
+  for (const modelName of modelCandidates) {
+    for (const prefix of ['', 'models/']) {
+      const fullName = `${prefix}${modelName}`;
       try {
-        const model = genAI.getGenerativeModel({ model: modelName });
-        const fallbackContents = [
-          { role: 'user', parts: [{ text: `${SYSTEM_PROMPT}\n\nPregunta: ${userMessage}` }] },
-          ...contents.slice(1)
-        ];
-        const result = await model.generateContent({ contents: fallbackContents });
+        const model = genAI.getGenerativeModel({ 
+          model: fullName,
+          systemInstruction: SYSTEM_PROMPT
+        });
+
+        const result = await model.generateContent({ contents });
+        console.log(`✅ [askGemini] Modelo funcionando: ${fullName}`);
         return result.response.text();
-      } catch (fallbackErr) {
-        console.error(`❌ Fallback también falló para ${modelName}:`, fallbackErr.message);
-        continue;
+        
+      } catch (err) {
+        console.error(`❌ Error con ${fullName}:`, err.message);
+        
+        // Fallback sin systemInstruction
+        try {
+          const model = genAI.getGenerativeModel({ model: fullName });
+          const fallbackContents = [
+            { role: 'user', parts: [{ text: `${SYSTEM_PROMPT}\n\nPregunta: ${userMessage}` }] },
+            ...contents.slice(1)
+          ];
+          const result = await model.generateContent({ contents: fallbackContents });
+          console.log(`✅ [askGemini] Fallback funcionando: ${fullName}`);
+          return result.response.text();
+        } catch (fallbackErr) {
+          console.error(`❌ Fallback también falló para ${fullName}:`, fallbackErr.message);
+        }
       }
     }
   }
@@ -1522,22 +1504,69 @@ Si quieres volver a vincular tu cuenta, envía tu email institucional.`;
 
     let eventosContexto = "";
     if (Evento && usuario) {
-      const [aprobados, pendientes, rechazados] = await Promise.all([
-        Evento.count({ where: { estado: 'aprobado', idacademico: usuario.idusuario } }),
-        Evento.count({ where: { estado: 'pendiente', idacademico: usuario.idusuario } }),
-        Evento.count({ where: { estado: 'rechazado', idacademico: usuario.idusuario } })
-      ]);
-      const lista = await Evento.findAll({ 
-        where: { estado: 'aprobado', idacademico: usuario.idusuario }, 
-        limit: 4, 
-        attributes: ['nombreevento', 'fechaevento', 'estado'] 
+      // Obtener eventos PENDIENTES con detalles completos
+      const eventosPendientes = await Evento.findAll({
+        where: { estado: 'pendiente', idacademico: usuario.idusuario },
+        attributes: ['idevento', 'nombreevento', 'fechaevento', 'horaevento', 'lugarevento', 'descripcion', 'created_at'],
+        order: [['created_at', 'DESC']],
+        limit: 10
       });
-      if (lista.length > 0) {
-        eventosContexto = `Tus eventos aprobados:\n` + lista.map(e => 
-          `- ${e.nombreevento} (${e.fechaevento}) [${e.estado}]`
-        ).join('\n');
+
+      // Obtener eventos APROBADOS con detalles completos
+      const eventosAprobados = await Evento.findAll({
+        where: { estado: 'aprobado', idacademico: usuario.idusuario },
+        attributes: ['idevento', 'nombreevento', 'fechaevento', 'horaevento', 'lugarevento', 'descripcion', 'created_at'],
+        order: [['fechaevento', 'ASC']],
+        limit: 10
+      });
+
+      // Obtener eventos RECHAZADOS con motivos
+      const eventosRechazados = await Evento.findAll({
+        where: { estado: 'rechazado', idacademico: usuario.idusuario },
+        attributes: ['idevento', 'nombreevento', 'fechaevento', 'razon_rechazo', 'fecha_rechazo'],
+        order: [['fecha_rechazo', 'DESC']],
+        limit: 5
+      });
+
+      const stats = {
+        pendientes: eventosPendientes.length,
+        aprobados: eventosAprobados.length,
+        rechazados: eventosRechazados.length
+      };
+
+      // Construir contexto detallado para la IA
+      if (eventosPendientes.length > 0) {
+        eventosContexto += `📋 **EVENTOS PENDIENTES (${eventosPendientes.length}):**\n`;
+        eventosPendientes.forEach((e, i) => {
+          eventosContexto += `${i+1}. **${e.nombreevento}** (ID: ${e.idevento})\n`;
+          eventosContexto += `   📅 ${new Date(e.fechaevento).toLocaleDateString('es-ES')} ⏰ ${e.horaevento || 'Sin hora'} 📍 ${e.lugarevento || 'Sin lugar'}\n`;
+          if (e.descripcion) eventosContexto += `   📝 ${e.descripcion.substring(0, 150)}\n`;
+          eventosContexto += `\n`;
+        });
       }
-      eventosContexto += `\n\n📊 ESTADÍSTICAS:\n✅ Aprobados: ${aprobados}\n⏳ Pendientes: ${pendientes}\n❌ Rechazados: ${rechazados}`;
+
+      if (eventosAprobados.length > 0) {
+        eventosContexto += `✅ **EVENTOS APROBADOS (${eventosAprobados.length}):**\n`;
+        eventosAprobados.forEach((e, i) => {
+          eventosContexto += `${i+1}. **${e.nombreevento}** (ID: ${e.idevento})\n`;
+          eventosContexto += `   📅 ${new Date(e.fechaevento).toLocaleDateString('es-ES')} ⏰ ${e.horaevento || 'Sin hora'} 📍 ${e.lugarevento || 'Sin lugar'}\n`;
+          eventosContexto += `\n`;
+        });
+      }
+
+      if (eventosRechazados.length > 0) {
+        eventosContexto += `❌ **EVENTOS RECHAZADOS (${eventosRechazados.length}):**\n`;
+        eventosRechazados.forEach((e, i) => {
+          eventosContexto += `${i+1}. **${e.nombreevento}** (ID: ${e.idevento})\n`;
+          eventosContexto += `   📅 ${new Date(e.fechaevento).toLocaleDateString('es-ES')}\n`;
+          if (e.razon_rechazo) eventosContexto += `   💬 Motivo: ${e.razon_rechazo}\n`;
+          eventosContexto += `\n`;
+        });
+      }
+
+      eventosContexto += `📊 **RESUMEN:** ✅ ${stats.aprobados} | ⏳ ${stats.pendientes} | ❌ ${stats.rechazados}\n`;
+      eventosContexto += `👤 **Usuario:** ${usuario.nombre} ${usuario.apellidopat || ''} (${usuario.email})\n`;
+      eventosContexto += `🎭 **Rol:** ${usuario.role || 'usuario'}`;
     }
 
     const reply = await askGemini(text, usuario?.nombre || 'Usuario', eventosContexto, []);

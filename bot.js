@@ -27,7 +27,7 @@ const getBot = () => _botInstance;
 // ─────────────────────────────────────────
 const menus = {
   admin: [
-    [{ text: '📅 Ver eventos',     callback_data: 'ver_eventos'     }, { text: '➕ Crear evento',    callback_data: 'crear_evento'    }],
+    [{ text: '📅 Ver eventos',     callback_data: 'ver_eventos'     }, { text: '➕ ',    callback_data: 'crear_evento'    }],
     [{ text: '✏️ Editar evento',   callback_data: 'editar_evento'   }, { text: '🗑️ Eliminar evento', callback_data: 'eliminar_evento' }],
     [{ text: '📢 Mensaje a todos', callback_data: 'msg_global'      }],
     [{ text: '🚪 Cerrar sesión',   callback_data: 'logout'          }],
