@@ -447,20 +447,20 @@ class ChatBotService {
 
     const tieneNombreInline = limpio.split(/\s+/).length >= 2;
     const data = {};
-
     if (tieneNombreInline) {
       data.nombreevento = limpio.replace(/^:\s*/, '').trim();
     }
 
-    this.sesionesCreacion.set(userId, { step: tieneNombreInline ? 'fecha' : 'nombre', data });
+    // Igual que en "Proyectar Evento": primero la fecha (fechas disponibles), luego el resto
+    const fechas = await this._obtenerFechasDisponibles();
+    this.sesionesCreacion.set(userId, { step: 'fecha', data });
 
-    if (tieneNombreInline) {
-      return {
-        respuesta: `✅ Nombre del evento: <b>${data.nombreevento}</b>\n\n📅 Ahora dime la <b>fecha</b> (YYYY-MM-DD, ej: 2026-10-15 o "mañana").\n\nPuedes cancelar escribiendo "cancelar".`,
-      };
-    }
+    const intro = tieneNombreInline
+      ? `➕ ¡Vamos a crear "${data.nombreevento}"!\n\n`
+      : `➕ ¡Vamos a crear tu evento!\n\n`;
+
     return {
-      respuesta: `📝 ¡Genial! Empecemos con la creación.\n\n✏️ ¿Cuál es el <b>nombre</b> del evento?\n\nPuedes cancelar escribiendo "cancelar".`,
+      respuesta: `${intro}De igual forma que en "Proyectar Evento", el evento debe crearse con al menos 2 semanas (14 días) de anticipación.\n\n${this._mensajeFechasDisponibles(fechas)}\n\nPuedes cancelar escribiendo "cancelar".`,
     };
   }
 
@@ -469,7 +469,7 @@ class ChatBotService {
     const { step, data } = sesion;
     const t = pregunta.trim();
 
-    if (/^(cancelar|cancela|cancel|no|dejar|parar|detener|salir)\b/i.test(t)) {
+    if (/^(cancelar|cancela|cancel|detener|parar|salir)\b/i.test(t)) {
       this.sesionesCreacion.delete(userId);
       return { respuesta: '❌ Creación cancelada. No se creó ningún evento.\n\nPuedes volver a empezar con "crear evento".' };
     }
@@ -478,23 +478,50 @@ class ChatBotService {
       case 'nombre': {
         const nombre = t.slice(0, 120);
         if (nombre.length < 2) {
-          return { respuesta: '⚠️ El nombre debe tener al menos 2 caracteres. ¿Cuál es el nombre del evento?' };
+          return { respuesta: '⚠️ El nombre debe tener al menos 2 caracteres. ✏️ ¿Cuál es el nombre del evento?' };
         }
         data.nombreevento = nombre;
-        sesion.step = 'fecha';
+        sesion.step = 'hora';
         this.sesionesCreacion.set(userId, sesion);
-        return { respuesta: `✅ Nombre: <b>${nombre}</b>\n\n📅 ¿Cuál es la <b>fecha</b>? (YYYY-MM-DD, ej: 2026-10-15 o "mañana")` };
+        return { respuesta: `✅ Nombre: ${nombre}\n\n⏰ ¿A qué hora? (HH:MM en formato 24h, ej: 19:00 o "7:30 PM")` };
       }
 
       case 'fecha': {
-        const fecha = this._parseFecha(t);
-        if (!fecha) {
-          return { respuesta: '⚠️ Fecha no válida. Usa el formato YYYY-MM-DD (ej: 2026-10-15), "hoy" o "mañana".' };
+        const fechaMin = this._fechaLocal(14);
+        const fechas = await this._obtenerFechasDisponibles();
+
+        let fecha = null;
+        if (/^\d{1,2}$/.test(t)) {
+          const idx = parseInt(t, 10) - 1;
+          fecha = fechas[idx] || null;
+          if (!fecha) {
+            return { respuesta: `⚠️ Elige un número entre 1 y ${fechas.length}.\n\n${this._mensajeFechasDisponibles(fechas)}` };
+          }
+        } else {
+          fecha = this._parseFecha(t);
         }
-        data.fechaevento = fecha;
-        sesion.step = 'hora';
+
+        if (!fecha) {
+          return { respuesta: `⚠️ Fecha no válida. Usa el formato YYYY-MM-DD (ej: ${fechaMin}), "hoy", "mañana" o elige un número de la lista.\n\n${this._mensajeFechasDisponibles(fechas)}` };
+        }
+
+        if (String(fecha).slice(0, 10) < fechaMin) {
+          return { respuesta: `⚠️ El evento debe crearse con al menos 2 semanas (14 días) de anticipación. La fecha más próxima permitida es ${this._fmtFechaLarga(fechaMin)}.\n\n${this._mensajeFechasDisponibles(fechas)}` };
+        }
+
+        if (!(await this._diaTieneCupo(fecha))) {
+          return { respuesta: `⚠️ El día ${this._fmtFechaLarga(fecha)} ya tiene 2 eventos programados (máximo permitido). Elige otra fecha.\n\n${this._mensajeFechasDisponibles(fechas)}` };
+        }
+
+        data.fechaevento = String(fecha).slice(0, 10);
+        sesion.step = data.nombreevento ? 'hora' : 'nombre';
         this.sesionesCreacion.set(userId, sesion);
-        return { respuesta: `📅 Fecha: <b>${fecha}</b>\n\n⏰ ¿A qué <b>hora</b>? (HH:MM en formato 24h, ej: 19:00 o "7:30 PM")` };
+
+        let msg = `📅 Fecha: ${this._fmtFechaLarga(data.fechaevento)}\n\n`;
+        msg += data.nombreevento
+          ? `⏰ ¿A qué hora? (HH:MM en formato 24h, ej: 19:00 o "7:30 PM")`
+          : `✏️ ¿Cuál es el nombre del evento?`;
+        return { respuesta: msg };
       }
 
       case 'hora': {
@@ -505,7 +532,7 @@ class ChatBotService {
         data.horaevento = hora;
         sesion.step = 'lugar';
         this.sesionesCreacion.set(userId, sesion);
-        return { respuesta: `⏰ Hora: <b>${hora}</b>\n\n📍 ¿Dónde se realizará el evento? (salón, auditorio, etc.) o escribe "Por definir".` };
+        return { respuesta: `⏰ Hora: ${hora}\n\n📍 ¿Dónde se realizará el evento? (salón, auditorio, etc.) o escribe "Por definir".` };
       }
 
       case 'lugar': {
@@ -516,7 +543,7 @@ class ChatBotService {
         sesion.step = 'confirmar';
         this.sesionesCreacion.set(userId, sesion);
         return {
-          respuesta: `📋 <b>Resumen del evento:</b>\n\n📝 Nombre: ${data.nombreevento}\n📅 Fecha: ${data.fechaevento}\n⏰ Hora: ${data.horaevento}\n📍 Lugar: ${lugar}\n\n¿Confirmas la creación? Responde <b>Sí</b> para confirmar o <b>No</b> para cancelar.`,
+          respuesta: `📋 RESUMEN DEL EVENTO:\n\n📝 Nombre: ${data.nombreevento}\n📅 Fecha: ${this._fmtFechaLarga(data.fechaevento)}\n⏰ Hora: ${data.horaevento}\n📍 Lugar: ${lugar}\n\n¿Confirmas la creación? Responde Sí para confirmar o No para cancelar.`,
         };
       }
 
@@ -538,12 +565,8 @@ class ChatBotService {
 
   _parseFecha(texto) {
     const t = (texto || '').toLowerCase().trim();
-    if (t === 'hoy') return new Date().toISOString().slice(0, 10);
-    if (t === 'mañana' || t === 'manana') {
-      const d = new Date();
-      d.setDate(d.getDate() + 1);
-      return d.toISOString().slice(0, 10);
-    }
+    if (t === 'hoy') return this._fechaLocal(0);
+    if (t === 'mañana' || t === 'manana') return this._fechaLocal(1);
     let m = t.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
     if (m) return `${m[1]}-${String(Number(m[2])).padStart(2, '0')}-${String(Number(m[3])).padStart(2, '0')}`;
     m = t.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
@@ -572,12 +595,87 @@ class ChatBotService {
     return partes[0] * 60 + partes[1];
   }
 
+  _fechaLocal(offsetDias = 0) {
+    const d = new Date();
+    d.setDate(d.getDate() + offsetDias);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${mm}-${dd}`;
+  }
+
+  _fmtFechaLarga(iso) {
+    const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number);
+    try {
+      return new Date(y, m - 1, d).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    } catch {
+      return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+    }
+  }
+
+  async _diaTieneCupo(fecha) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT COUNT(*)::int AS total FROM evento
+         WHERE CAST(fechaevento AS DATE) = CAST($1 AS DATE)
+           AND estado IN ('pendiente', 'aprobado')`,
+        [String(fecha).slice(0, 10)]
+      );
+      return (rows[0]?.total || 0) < 2;
+    } catch (error) {
+      console.error('❌ Error en _diaTieneCupo:', error.message);
+      return true;
+    }
+  }
+
+  async _obtenerFechasDisponibles(limit = 5) {
+    const fallback = [14, 15, 16, 17, 18].map(n => this._fechaLocal(n));
+    try {
+      const { rows } = await pool.query(
+        `SELECT CAST(fechaevento AS DATE)::text AS fecha, COUNT(*)::int AS total
+         FROM evento
+         WHERE fechaevento >= $1 AND estado IN ('pendiente', 'aprobado')
+         GROUP BY CAST(fechaevento AS DATE)`,
+        [this._fechaLocal(14)]
+      );
+      const ocupados = new Set();
+      rows.forEach(r => {
+        if ((r.total || 0) >= 2) ocupados.add(String(r.fecha).slice(0, 10));
+      });
+
+      const disponibles = [];
+      for (let i = 0; i < 90 && disponibles.length < limit; i++) {
+        const iso = this._fechaLocal(14 + i);
+        if (!ocupados.has(iso)) disponibles.push(iso);
+      }
+      return disponibles.length ? disponibles : fallback;
+    } catch (error) {
+      console.error('❌ Error en _obtenerFechasDisponibles:', error.message);
+      return fallback;
+    }
+  }
+
+  _mensajeFechasDisponibles(fechas) {
+    let msg = `📅 Fechas disponibles (con 2 semanas de anticipación):\n\n`;
+    fechas.forEach((f, i) => {
+      msg += `${i + 1}. ${this._fmtFechaLarga(f)}\n`;
+    });
+    msg += `\n✏️ Responde con el número de la fecha (ej: 2) o escríbela en formato YYYY-MM-DD (ej: ${fechas[0] || this._fechaLocal(14)}).`;
+    return msg;
+  }
+
   async _crearEventoFinal(userId, data) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
       const fechaISO = String(data.fechaevento).slice(0, 10);
+      const fechaMin = this._fechaLocal(14);
+
+      // 0️⃣ Anticipación: al menos 2 semanas (14 días)
+      if (fechaISO < fechaMin) {
+        await client.query('ROLLBACK');
+        return { respuesta: `⚠️ El evento debe crearse con al menos 2 semanas (14 días) de anticipación.\n\nLa fecha más próxima permitida es ${fechaMin}.\n\nEscribe "crear evento" para empezar de nuevo.` };
+      }
 
       // 1️⃣ Límite: máximo 2 eventos por día y sin conflicto de hora (2h)
       const { rows: eventosDelDia } = await client.query(
@@ -626,7 +724,7 @@ class ChatBotService {
       await client.query('COMMIT');
 
       return {
-        respuesta: `🎉 <b>¡Evento creado exitosamente!</b>\n\n📝 Nombre: ${data.nombreevento}\n📅 Fecha: ${fechaISO}\n⏰ Hora: ${data.horaevento}\n📍 Lugar: ${data.lugarevento}\n🆔 ID: ${ev.idevento}\n\n⏳ Estado: <b>Pendiente de aprobación</b>.\n\n¿Quieres crear otro? Escribe "crear evento".`,
+        respuesta: `🎉 ¡EVENTO CREADO EXITOSAMENTE! 🎉\n\n📝 Nombre: ${data.nombreevento}\n📅 Fecha: ${this._fmtFechaLarga(fechaISO)}\n⏰ Hora: ${data.horaevento}\n📍 Lugar: ${data.lugarevento}\n🆔 ID: ${ev.idevento}\n\n⏳ Estado: Pendiente de aprobación.\n\n¿Quieres crear otro? Escribe "crear evento".`,
       };
     } catch (error) {
       try { await client.query('ROLLBACK'); } catch (e) { /* rollback ya hecho */ }
