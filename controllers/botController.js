@@ -646,6 +646,7 @@ const appChat = async (req, res) => {
     if (!message?.trim()) return res.status(400).json({ error: 'Mensaje vacío' });
 
     let eventosContexto = "";
+    let stats = { aprobados: 0, pendientes: 0, rechazados: 0 };
 
     if (Evento && eventId) {
       const evento = await Evento.findByPk(eventId, {
@@ -656,16 +657,25 @@ const appChat = async (req, res) => {
       }
     } 
     else if (Evento) {
+      // Traer stats completos para el fallback y Gemini
+      const [aprobados, pendientes, rechazados] = await Promise.all([
+        Evento.count({ where: { estado: 'aprobado' } }),
+        Evento.count({ where: { estado: 'pendiente' } }),
+        Evento.count({ where: { estado: 'rechazado' } })
+      ]);
+      stats = { aprobados, pendientes, rechazados };
+
       const lista = await Evento.findAll({ 
         where: { estado: 'aprobado' }, 
         limit: 4, 
         attributes: ['nombreevento', 'fechaevento', 'estado'] 
       });
       if (lista.length > 0) {
-        eventosContexto = "Eventos aprobados:\n" + lista.map(e => 
+        eventosContexto = `Eventos aprobados:\n` + lista.map(e => 
           `- ${e.nombreevento} (${e.fechaevento}) [${e.estado}]`
         ).join('\n');
       }
+      eventosContexto += `\n\n📊 ESTADÍSTICAS:\n✅ Aprobados: ${aprobados}\n⏳ Pendientes: ${pendientes}\n❌ Rechazados: ${rechazados}`;
     }
 
     const reply = await askGemini(message, sender, eventosContexto, history);
