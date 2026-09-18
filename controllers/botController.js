@@ -605,7 +605,7 @@ ${eventosContexto || "Sin eventos activos en este momento."}`;
     parts: [{ text: userMessage }]
   });
 
-  for (const modelName of ['gemini-1.5-flash']) {
+  for (const modelName of ['gemini-1.5-flash', 'gemini-1.5-flash-001', 'gemini-1.5-pro-001', 'gemini-1.5-pro']) {
     try {
       const model = genAI.getGenerativeModel({ 
         model: modelName,
@@ -617,22 +617,20 @@ ${eventosContexto || "Sin eventos activos en este momento."}`;
       
     } catch (err) {
       console.error(`❌ Error con ${modelName}:`, err.message);
-      console.error(`❌ Stack:`, err.stack);
-      if (err.message?.includes('systemInstruction')) {
-        try {
-          const model = genAI.getGenerativeModel({ model: modelName });
-          const fallbackContents = [
-            { role: 'user', parts: [{ text: `${SYSTEM_PROMPT}\n\nPregunta: ${userMessage}` }] },
-            ...contents.slice(1)
-          ];
-          const result = await model.generateContent({ contents: fallbackContents });
-          return result.response.text();
-        } catch (fallbackErr) {
-          console.error(`❌ Fallback también falló para ${modelName}:`, fallbackErr.message);
-          continue;
-        }
+      
+      // Fallback sin systemInstruction para CUALQUIER error
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const fallbackContents = [
+          { role: 'user', parts: [{ text: `${SYSTEM_PROMPT}\n\nPregunta: ${userMessage}` }] },
+          ...contents.slice(1)
+        ];
+        const result = await model.generateContent({ contents: fallbackContents });
+        return result.response.text();
+      } catch (fallbackErr) {
+        console.error(`❌ Fallback también falló para ${modelName}:`, fallbackErr.message);
+        continue;
       }
-      continue;
     }
   }
   return "⚠️ Servicio temporalmente ocupado. Intenta en unos segundos. (Ver logs del servidor para detalles)";
