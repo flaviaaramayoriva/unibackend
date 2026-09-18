@@ -583,9 +583,10 @@ ${eventosContexto || "Sin eventos registrados."}`;
   });
 
   const modelCandidates = [
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-    'gemini-1.5-pro',
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash-8b-latest', 
+    'gemini-1.5-pro-latest',
+    'gemini-2.0-flash',
     'gemini-2.0-flash-exp',
   ];
 
@@ -621,11 +622,16 @@ ${eventosContexto || "Sin eventos registrados."}`;
       }
     }
   }
-  // Fallback final: respuesta útil basada en keywords genéricos
+  // Fallback final: usar el contexto rico que ya tenemos (sin IA)
+  // El contexto ya tiene TODOS los eventos del usuario con detalles completos
+  if (eventosContexto && eventosContexto !== "Sin eventos registrados.") {
+    return `📊 **Tus eventos (modo offline - IA no disponible):**\n\n${eventosContexto}\n\n💡 La IA está temporalmente indisponible, pero aquí tienes tus datos completos.`;
+  }
+  
   const msgLower = userMessage.toLowerCase();
   if (msgLower.includes('hola') || msgLower.includes('buenas')) return '¡Hola! ¿En qué te ayudo? Prueba: "pendientes", "resumen", "crear evento".';
   if (msgLower.includes('gracias')) return '¡De nada! 😊 ¿Algo más en lo que ayude?';
-  return 'No pude conectar con la IA. Comandos rápidos: "pendientes", "resumen", "próximos", "crear evento", "ayuda".';
+  return 'No pude conectar con la IA. Pero tus eventos se cargan arriba ⬆️ si estás vinculado.';
 }
 
 function getMessage() {
