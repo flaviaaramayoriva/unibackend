@@ -566,7 +566,18 @@ async function askGemini(userMessage, senderInfo = 'Invitado', eventosContexto =
 - Si pide "próximos" → FILTRA eventos aprobados por fecha cercana.
 - Si pregunta por evento específico → BUSCA en el contexto por nombre/ID.
 - NUNCA inventes datos. Si no está en el contexto, di: "No tengo esa información en tus eventos actuales".
-- Formato: usa **negrita** para nombres, 📅 fecha, ⏰ hora, 📍 lugar, 💬 motivo.
+
+📋 FORMATO OBLIGATORIO DE CADA EVENTO (no omitas campos que existan en el contexto):
+- NO uses encabezados tipo ### o #; usa texto plano con emojis.
+• **Nombre del evento** (ID: N)
+  - 📅 Fecha: día/mes/año
+  - ⏰ Hora: (si existe)
+  - 📍 Lugar: (si existe)
+  - 📝 Descripción: (si existe)
+  - 💬 Motivo: (solo en rechazados)
+- Agrupa con encabezados según estado: ✅ **Aprobados** / ⏳ **Pendientes** / ❌ **Rechazados**.
+- Empieza con una frase corta y amable, termina con una pregunta de ayuda.
+- Responde SIEMPRE en español.
 
 📊 CONTEXTO DEL SISTEMA (TUS EVENTOS REALES):
 ${eventosContexto || "Sin eventos registrados."}`;
@@ -648,6 +659,108 @@ function getMessage() {
   try { return getModels()?.Message || null; } catch { return null; }
 }
 
+// ============================================================
+// ASISTENTE GUIADO PARA CREAR EVENTOS (chat de la app)
+// Guía datos básicos y luego remite al formulario /admin/craq
+// ============================================================
+const sesionesCrearApp = new Map();
+
+function _parseHoraGuia(texto) {
+  const t = texto.trim().toLowerCase();
+  const m24 = t.match(/^(\d{1,2})[:.](\d{2})$/);
+  if (m24) {
+    const h = parseInt(m24[1], 10), min = parseInt(m24[2], 10);
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+    return null;
+  }
+  const m12 = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/);
+  if (m12) {
+    let h = parseInt(m12[1], 10);
+    const min = m12[2] ? parseInt(m12[2], 10) : 0;
+    const ap = m12[3];
+    if (h < 1 || h > 12 || min > 59) return null;
+    if (ap === 'pm' && h !== 12) h += 12;
+    if (ap === 'am' && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+  }
+  return null;
+}
+
+function _parseFechaGuia(texto) {
+  const t = texto.trim();
+  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${String(m[2]).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`;
+  return null;
+}
+
+function procesarCrearGuiado(senderKey, message) {
+  const t = (message || '').trim();
+  const intentInicio = /^(crear evento|nuevo evento|crear)\b/i.test(t);
+
+  if (intentInicio) {
+    sesionesCrearApp.set(senderKey, { step: 'nombre', data: {} });
+    return { reply: '¡Claro! Vamos a crear tu evento. ✏️ ¿Cuál es el **nombre** del evento?' };
+  }
+
+  if (/^(cancelar|cancela|cancel|salir|detener|parar)\b/i.test(t)) {
+    sesionesCrearApp.delete(senderKey);
+    return { reply: '❌ Creación cancelada. Escribe "crear evento" cuando quieras intentar de nuevo.' };
+  }
+
+  const sesion = sesionesCrearApp.get(senderKey);
+  if (!sesion) return null;
+
+  const { step, data } = sesion;
+
+  if (step === 'nombre') {
+    if (t.length < 2) return { reply: '⚠️ El nombre debe tener al menos 2 caracteres. ✏️ ¿Cuál es el nombre del evento?' };
+    data.nombreevento = t.slice(0, 120);
+    sesion.step = 'hora';
+    sesionesCrearApp.set(senderKey, sesion);
+    return { reply: `✅ Nombre: **${data.nombreevento}**\n\n⏰ ¿A qué **hora** se realizará? (ej: 19:00, 15:30 o 7:30 PM)` };
+  }
+
+  if (step === 'hora') {
+    const hora = _parseHoraGuia(t);
+    if (!hora) return { reply: '⚠️ Hora no válida. Usa formato 24h (ej: **19:00**) o 12h (ej: **7:30 PM**).' };
+    data.horaevento = hora;
+    sesion.step = 'fecha';
+    sesionesCrearApp.set(senderKey, sesion);
+    return { reply: `✅ Hora: **${hora}**\n\n📅 ¿Qué **día** se realizará? (ej: 2026-10-15 o 15/10/2026)` };
+  }
+
+  if (step === 'fecha') {
+    const fecha = _parseFechaGuia(t);
+    if (!fecha) return { reply: '⚠️ Fecha no válida. Usa el formato **YYYY-MM-DD** (ej: 2026-10-15) o **DD/MM/AAAA**.' };
+    data.fechaevento = fecha;
+    sesion.step = 'lugar';
+    sesionesCrearApp.set(senderKey, sesion);
+    return { reply: `✅ Fecha: **${fecha}**\n\n📍 ¿Dónde se realizará? (ej: Auditorio, Aula 310, Biblioteca...)` };
+  }
+
+  if (step === 'lugar') {
+    data.lugarevento = t.slice(0, 100);
+    sesionesCrearApp.delete(senderKey);
+    const params = [
+      `nombreevento=${encodeURIComponent(data.nombreevento)}`,
+      `selectedDate=${encodeURIComponent(data.fechaevento)}`,
+      `selectedHour=${encodeURIComponent(data.horaevento.split(':')[0])}`,
+      `lugarevento=${encodeURIComponent(data.lugarevento)}`
+    ].join('&');
+    const resumen = `✅ **¡Listo!** Estos son los datos de tu evento:\n\n` +
+      `📝 Nombre: **${data.nombreevento}**\n` +
+      `⏰ Hora: **${data.horaevento}**\n` +
+      `📅 Fecha: **${data.fechaevento}**\n` +
+      `📍 Lugar: **${data.lugarevento}**\n\n` +
+      `Te llevaré al formulario para completar los detalles restantes.`;
+    return { reply: resumen, abrirFormulario: `/admin/craq?${params}` };
+  }
+
+  return null;
+}
+
 
 const appChat = async (req, res) => {
   try {
@@ -657,13 +770,27 @@ const appChat = async (req, res) => {
 
     if (!message?.trim()) return res.status(400).json({ error: 'Mensaje vacío' });
 
+    // ── Asistente guiado para crear evento ──
+    const senderKey = String(sender || 'invitado');
+    const guia = procesarCrearGuiado(senderKey, message);
+    if (guia) {
+      return res.json({ reply: guia.reply, eventId: eventId || null, abrirFormulario: guia.abrirFormulario || null });
+    }
+
     let eventosContexto = "";
     let stats = { aprobados: 0, pendientes: 0, rechazados: 0 };
     let usuario = null;
 
-    // Si sender es email, buscar usuario para obtener sus eventos
-    if (sender !== 'invitado' && sender !== 'anonymous' && sender.includes('@')) {
-      usuario = await User.findOne({ where: { email: sender.toLowerCase() } });
+    // Si sender es email, buscar usuario por email; si es ID numérico, buscar por idusuario
+    if (sender !== 'invitado' && sender !== 'anonymous') {
+      if (sender.includes('@')) {
+        usuario = await User.findOne({ where: { email: sender.toLowerCase() } });
+      } else {
+        const senderId = parseInt(sender, 10);
+        if (!isNaN(senderId)) {
+          usuario = await User.findOne({ where: { idusuario: senderId } });
+        }
+      }
     }
 
     let eventoConsultado = null;
@@ -697,7 +824,7 @@ const appChat = async (req, res) => {
         }),
         Evento.findAll({
           where: { estado: 'rechazado', idacademico: usuario.idusuario },
-          attributes: ['idevento', 'nombreevento', 'fechaevento', 'razon_rechazo', 'fecha_rechazo'],
+          attributes: ['idevento', 'nombreevento', 'fechaevento', 'horaevento', 'razon_rechazo', 'fecha_rechazo'],
           order: [['fecha_rechazo', 'DESC']],
           limit: 5
         })
@@ -732,7 +859,7 @@ const appChat = async (req, res) => {
         eventosContexto += `❌ **TUS EVENTOS RECHAZADOS (${eventosRechazados.length}):**\n`;
         eventosRechazados.forEach((e, i) => {
           eventosContexto += `${i+1}. **${e.nombreevento}** (ID: ${e.idevento})\n`;
-          eventosContexto += `   📅 ${new Date(e.fechaevento).toLocaleDateString('es-ES')}\n`;
+          eventosContexto += `   📅 ${new Date(e.fechaevento).toLocaleDateString('es-ES')} ⏰ ${e.horaevento || 'Sin hora'}\n`;
           if (e.razon_rechazo) eventosContexto += `   💬 Motivo: ${e.razon_rechazo}\n`;
           eventosContexto += `\n`;
         });
@@ -754,11 +881,11 @@ const appChat = async (req, res) => {
       const lista = await Evento.findAll({ 
         where: { estado: 'aprobado' }, 
         limit: 4, 
-        attributes: ['nombreevento', 'fechaevento', 'estado'] 
+        attributes: ['nombreevento', 'fechaevento', 'horaevento', 'lugarevento', 'estado'] 
       });
       if (lista.length > 0) {
         eventosContexto = `Eventos aprobados:\n` + lista.map(e => 
-          `- ${e.nombreevento} (${e.fechaevento}) [${e.estado}]`
+          `- **${e.nombreevento}** 📅 ${new Date(e.fechaevento).toLocaleDateString('es-ES')} ⏰ ${e.horaevento || 'Sin hora'} 📍 ${e.lugarevento || 'Sin lugar'} [${e.estado}]`
         ).join('\n');
       }
       eventosContexto += `\n\n📊 ESTADÍSTICAS:\n✅ Aprobados: ${aprobados}\n⏳ Pendientes: ${pendientes}\n❌ Rechazados: ${rechazados}`;
