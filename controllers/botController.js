@@ -668,16 +668,22 @@ const appChat = async (req, res) => {
       usuario = await User.findOne({ where: { email: sender.toLowerCase() } });
     }
 
+    let eventoConsultado = null;
+
+    // 1. Si viene eventId, obtener el evento consultado
     if (Evento && eventId) {
-      const evento = await Evento.findByPk(eventId, {
-        attributes: ['nombreevento', 'fechaevento', 'descripcion', 'lugarevento', 'estado']
+      eventoConsultado = await Evento.findByPk(eventId, {
+        attributes: ['nombreevento', 'fechaevento', 'descripcion', 'lugarevento', 'estado', 'horaevento']
       });
-      if (evento) {
-        eventosContexto = `EVENTO CONSULTADO:\n• Nombre: ${evento.nombreevento}\n• Fecha: ${evento.fechaevento}\n• Lugar: ${evento.lugarevento}\n• Estado: ${evento.estado}\n• Descripción: ${evento.descripcion}`;
-      }
-    } 
-    else if (Evento && usuario) {
-      // Obtener eventos DEL USUARIO (como en Telegram)
+    }
+
+    // 2. Construir contexto en 2 partes: evento + eventos del usuario
+    if (eventoConsultado) {
+      eventosContexto = `🔎 **EVENTO CONSULTADO:**\n• Nombre: ${eventoConsultado.nombreevento}\n• Fecha: ${eventoConsultado.fechaevento}\n• Hora: ${eventoConsultado.horaevento || 'N/A'}\n• Lugar: ${eventoConsultado.lugarevento}\n• Estado: ${eventoConsultado.estado}\n• Descripción: ${eventoConsultado.descripcion || 'Sin descripción'}\n\n`;
+    }
+
+    // 3. Si hay usuario, añadir TODOS sus eventos
+    if (Evento && usuario) {
       const [eventosPendientes, eventosAprobados, eventosRechazados] = await Promise.all([
         Evento.findAll({
           where: { estado: 'pendiente', idacademico: usuario.idusuario },
@@ -706,7 +712,7 @@ const appChat = async (req, res) => {
       };
 
       if (eventosPendientes.length > 0) {
-        eventosContexto += `📋 **EVENTOS PENDIENTES (${eventosPendientes.length}):**\n`;
+        eventosContexto += `📋 **TUS EVENTOS PENDIENTES (${eventosPendientes.length}):**\n`;
         eventosPendientes.forEach((e, i) => {
           eventosContexto += `${i+1}. **${e.nombreevento}** (ID: ${e.idevento})\n`;
           eventosContexto += `   📅 ${new Date(e.fechaevento).toLocaleDateString('es-ES')} ⏰ ${e.horaevento || 'Sin hora'} 📍 ${e.lugarevento || 'Sin lugar'}\n`;
@@ -716,7 +722,7 @@ const appChat = async (req, res) => {
       }
 
       if (eventosAprobados.length > 0) {
-        eventosContexto += `✅ **EVENTOS APROBADOS (${eventosAprobados.length}):**\n`;
+        eventosContexto += `✅ **TUS EVENTOS APROBADOS (${eventosAprobados.length}):**\n`;
         eventosAprobados.forEach((e, i) => {
           eventosContexto += `${i+1}. **${e.nombreevento}** (ID: ${e.idevento})\n`;
           eventosContexto += `   📅 ${new Date(e.fechaevento).toLocaleDateString('es-ES')} ⏰ ${e.horaevento || 'Sin hora'} 📍 ${e.lugarevento || 'Sin lugar'}\n`;
@@ -725,7 +731,7 @@ const appChat = async (req, res) => {
       }
 
       if (eventosRechazados.length > 0) {
-        eventosContexto += `❌ **EVENTOS RECHAZADOS (${eventosRechazados.length}):**\n`;
+        eventosContexto += `❌ **TUS EVENTOS RECHAZADOS (${eventosRechazados.length}):**\n`;
         eventosRechazados.forEach((e, i) => {
           eventosContexto += `${i+1}. **${e.nombreevento}** (ID: ${e.idevento})\n`;
           eventosContexto += `   📅 ${new Date(e.fechaevento).toLocaleDateString('es-ES')}\n`;
@@ -734,7 +740,7 @@ const appChat = async (req, res) => {
         });
       }
 
-      eventosContexto += `📊 **RESUMEN:** ✅ ${stats.aprobados} | ⏳ ${stats.pendientes} | ❌ ${stats.rechazados}\n`;
+      eventosContexto += `📊 **RESUMEN DE TUS EVENTOS:** ✅ ${stats.aprobados} aprobados | ⏳ ${stats.pendientes} pendientes | ❌ ${stats.rechazados} rechazados\n`;
       eventosContexto += `👤 **Usuario:** ${usuario.nombre} ${usuario.apellidopat || ''} (${usuario.email})\n`;
       eventosContexto += `🎭 **Rol:** ${usuario.role || 'usuario'}`;
     }
