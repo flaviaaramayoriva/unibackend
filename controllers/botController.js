@@ -8,14 +8,11 @@ const FormData = require('form-data');
 const chatBotService = require('../services/chatBotService');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-// Detectar si es key de Vertex AI (empieza con AQ.) vs Google AI Studio (empieza con AIza)
-const isVertexAIKey = GEMINI_API_KEY?.startsWith('AQ.');
-const isValidGoogleAIKey = GEMINI_API_KEY?.startsWith('AIza');
+// Google migró de keys "standard" (AIza...) a "auth keys" (AQ.*). Ambas funcionan con la API Gemini.
+const hasGeminiKey = !!GEMINI_API_KEY;
 
 if (!GEMINI_API_KEY) {
   console.error('❌❌❌ GEMINI_API_KEY NO CONFIGURADA EN VARIABLES DE ENTORNO ❌❌❌');
-} else if (isVertexAIKey) {
-  console.warn('⚠️ GEMINI_API_KEY es de Vertex AI (AQ.*), no funciona con @google/generative-ai. Usa key de Google AI Studio (AIza...) o instala @google-cloud/vertexai');
 } else {
   console.log('✅ GEMINI_API_KEY cargada:', GEMINI_API_KEY.substring(0, 10) + '...');
 }
@@ -588,18 +585,19 @@ ${eventosContexto || "Sin eventos registrados."}`;
     parts: [{ text: userMessage }]
   });
 
-  // Saltar Gemini si la key es de Vertex AI (no compatible con este SDK)
-  if (isVertexAIKey || !isValidGoogleAIKey) {
-    console.log('⏭️ [askGemini] Saltando Gemini - key incompatible, usando fallback rico');
-    return `📊 **Tus eventos (IA desactivada - key Vertex AI):**\n\n${eventosContexto || "Sin eventos registrados."}\n\n💡 Para activar IA: configura GEMINI_API_KEY con key de Google AI Studio (AIza...) en .env`;
+  // Saltar Gemini si no hay key configurada
+  if (!hasGeminiKey) {
+    console.log('⏭️ [askGemini] Sin GEMINI_API_KEY configurada, usando fallback rico');
+    return `📊 **Tus eventos (IA desactivada):**\n\n${eventosContexto || "Sin eventos registrados."}\n\n💡 Para activar IA: configura GEMINI_API_KEY en .env`;
   }
 
   const modelCandidates = [
-    'gemini-1.5-flash-latest',
-    'gemini-1.5-flash-8b-latest', 
-    'gemini-1.5-pro-latest',
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-exp',
+    'gemini-3.5-flash',
+    'gemini-flash-latest', 
+    'gemini-3.6-flash',
+    'gemini-flash-lite-latest',
+    'gemini-3.1-flash-lite',
+    'gemini-2.5-pro',
   ];
 
   for (const modelName of modelCandidates) {
