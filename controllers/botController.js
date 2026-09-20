@@ -8,8 +8,14 @@ const FormData = require('form-data');
 const chatBotService = require('../services/chatBotService');
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// Detectar si es key de Vertex AI (empieza con AQ.) vs Google AI Studio (empieza con AIza)
+const isVertexAIKey = GEMINI_API_KEY?.startsWith('AQ.');
+const isValidGoogleAIKey = GEMINI_API_KEY?.startsWith('AIza');
+
 if (!GEMINI_API_KEY) {
   console.error('❌❌❌ GEMINI_API_KEY NO CONFIGURADA EN VARIABLES DE ENTORNO ❌❌❌');
+} else if (isVertexAIKey) {
+  console.warn('⚠️ GEMINI_API_KEY es de Vertex AI (AQ.*), no funciona con @google/generative-ai. Usa key de Google AI Studio (AIza...) o instala @google-cloud/vertexai');
 } else {
   console.log('✅ GEMINI_API_KEY cargada:', GEMINI_API_KEY.substring(0, 10) + '...');
 }
@@ -582,6 +588,12 @@ ${eventosContexto || "Sin eventos registrados."}`;
     parts: [{ text: userMessage }]
   });
 
+  // Saltar Gemini si la key es de Vertex AI (no compatible con este SDK)
+  if (isVertexAIKey || !isValidGoogleAIKey) {
+    console.log('⏭️ [askGemini] Saltando Gemini - key incompatible, usando fallback rico');
+    return `📊 **Tus eventos (IA desactivada - key Vertex AI):**\n\n${eventosContexto || "Sin eventos registrados."}\n\n💡 Para activar IA: configura GEMINI_API_KEY con key de Google AI Studio (AIza...) en .env`;
+  }
+
   const modelCandidates = [
     'gemini-1.5-flash-latest',
     'gemini-1.5-flash-8b-latest', 
@@ -642,13 +654,19 @@ function getMessage() {
 const appChat = async (req, res) => {
   try {
     const models = getModels();
-    const { Evento, Message } = models;
+    const { Evento, Message, User } = models;
     const { message, sender = 'invitado', eventId, history = [] } = req.body;
 
     if (!message?.trim()) return res.status(400).json({ error: 'Mensaje vacío' });
 
     let eventosContexto = "";
     let stats = { aprobados: 0, pendientes: 0, rechazados: 0 };
+    let usuario = null;
+
+    // Si sender es email, buscar usuario para obtener sus eventos
+    if (sender !== 'invitado' && sender !== 'anonymous' && sender.includes('@')) {
+      usuario = await User.findOne({ where: { email: sender.toLowerCase() } });
+    }
 
     if (Evento && eventId) {
       const evento = await Evento.findByPk(eventId, {
@@ -658,8 +676,70 @@ const appChat = async (req, res) => {
         eventosContexto = `EVENTO CONSULTADO:\n• Nombre: ${evento.nombreevento}\n• Fecha: ${evento.fechaevento}\n• Lugar: ${evento.lugarevento}\n• Estado: ${evento.estado}\n• Descripción: ${evento.descripcion}`;
       }
     } 
+    else if (Evento && usuario) {
+      // Obtener eventos DEL USUARIO (como en Telegram)
+      const [eventosPendientes, eventosAprobados, eventosRechazados] = await Promise.all([
+        Evento.findAll({
+          where: { estado: 'pendiente', idacademico: usuario.idusuario },
+          attributes: ['idevento', 'nombreevento', 'fechaevento', 'horaevento', 'lugarevento', 'descripcion', 'created_at'],
+          order: [['created_at', 'DESC']],
+          limit: 10
+        }),
+        Evento.findAll({
+          where: { estado: 'aprobado', idacademico: usuario.idusuario },
+          attributes: ['idevento', 'nombreevento', 'fechaevento', 'horaevento', 'lugarevento', 'descripcion', 'created_at'],
+          order: [['fechaevento', 'ASC']],
+          limit: 10
+        }),
+        Evento.findAll({
+          where: { estado: 'rechazado', idacademico: usuario.idusuario },
+          attributes: ['idevento', 'nombreevento', 'fechaevento', 'razon_rechazo', 'fecha_rechazo'],
+          order: [['fecha_rechazo', 'DESC']],
+          limit: 5
+        })
+      ]);
+
+      stats = { 
+        pendientes: eventosPendientes.length, 
+        aprobados: eventosAprobados.length, 
+        rechazados: eventosRechazados.length 
+      };
+
+      if (eventosPendientes.length > 0) {
+        eventosContexto += `📋 **EVENTOS PENDIENTES (${eventosPendientes.length}):**\n`;
+        eventosPendientes.forEach((e, i) => {
+          eventosContexto += `${i+1}. **${e.nombreevento}** (ID: ${e.idevento})\n`;
+          eventosContexto += `   📅 ${new Date(e.fechaevento).toLocaleDateString('es-ES')} ⏰ ${e.horaevento || 'Sin hora'} 📍 ${e.lugarevento || 'Sin lugar'}\n`;
+          if (e.descripcion) eventosContexto += `   📝 ${e.descripcion.substring(0, 150)}\n`;
+          eventosContexto += `\n`;
+        });
+      }
+
+      if (eventosAprobados.length > 0) {
+        eventosContexto += `✅ **EVENTOS APROBADOS (${eventosAprobados.length}):**\n`;
+        eventosAprobados.forEach((e, i) => {
+          eventosContexto += `${i+1}. **${e.nombreevento}** (ID: ${e.idevento})\n`;
+          eventosContexto += `   📅 ${new Date(e.fechaevento).toLocaleDateString('es-ES')} ⏰ ${e.horaevento || 'Sin hora'} 📍 ${e.lugarevento || 'Sin lugar'}\n`;
+          eventosContexto += `\n`;
+        });
+      }
+
+      if (eventosRechazados.length > 0) {
+        eventosContexto += `❌ **EVENTOS RECHAZADOS (${eventosRechazados.length}):**\n`;
+        eventosRechazados.forEach((e, i) => {
+          eventosContexto += `${i+1}. **${e.nombreevento}** (ID: ${e.idevento})\n`;
+          eventosContexto += `   📅 ${new Date(e.fechaevento).toLocaleDateString('es-ES')}\n`;
+          if (e.razon_rechazo) eventosContexto += `   💬 Motivo: ${e.razon_rechazo}\n`;
+          eventosContexto += `\n`;
+        });
+      }
+
+      eventosContexto += `📊 **RESUMEN:** ✅ ${stats.aprobados} | ⏳ ${stats.pendientes} | ❌ ${stats.rechazados}\n`;
+      eventosContexto += `👤 **Usuario:** ${usuario.nombre} ${usuario.apellidopat || ''} (${usuario.email})\n`;
+      eventosContexto += `🎭 **Rol:** ${usuario.role || 'usuario'}`;
+    }
     else if (Evento) {
-      // Traer stats completos para el fallback y Gemini
+      // Fallback global (sin usuario identificado)
       const [aprobados, pendientes, rechazados] = await Promise.all([
         Evento.count({ where: { estado: 'aprobado' } }),
         Evento.count({ where: { estado: 'pendiente' } }),
