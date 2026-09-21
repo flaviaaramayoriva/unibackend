@@ -368,7 +368,7 @@ const getMyHistoricalData = asyncHandler(async (req, res) => {
 
 const getMyCommitteeEvents = asyncHandler(async (req, res) => {
   const models = getModels();
-  const { Evento, User, Academico, Facultad, Comite } = models;
+  const { Evento, User, Academico, Facultad, Comite, Fase } = models;
   
   try {
     const userId = req.user.idusuario;
@@ -462,10 +462,19 @@ const getMyCommitteeEvents = asyncHandler(async (req, res) => {
     }
 
     // 4. Formatear la respuesta para que coincida con lo que espera el frontend
+    let faseMap = new Map();
+    try {
+      const fasesReg = await Fase.findAll({ attributes: ['idfase', 'nrofase'] });
+      faseMap = new Map(fasesReg.map(f => [f.idfase, f.nrofase]));
+    } catch (e) {
+      console.warn('⚠️ Error al cargar fases:', e.message);
+    }
+
     const eventosFormateados = eventos.map(event => {
       const creador = event.academicoCreador;
       const facultadNombre = creador?.academico?.facultad?.nombre_facultad || 'Sin facultad';
-      
+      const nroFase = event.idfase ? (faseMap.get(event.idfase) || null) : null;
+
       return {
         idevento: event.idevento,
         nombreevento: event.nombreevento || 'Sin título',
@@ -474,6 +483,8 @@ const getMyCommitteeEvents = asyncHandler(async (req, res) => {
         horaevento: event.horaevento || 'N/A',
         lugarevento: event.lugarevento || 'Sin ubicación',
         estado: event.estado,
+        idfase: event.idfase || null,
+        fases: nroFase ? [{ nrofase: nroFase }] : [],
         idacademico: event.idacademico,
         Comite: comitePorEvento[event.idevento] || [],
         academico: creador ? {
