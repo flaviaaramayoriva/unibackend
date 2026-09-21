@@ -74,6 +74,50 @@ const notificarSala = async (io, { roomId, userId, userName, role, message, time
   }
 };
 
+const persistirNotificacionPrivada = async ({ roomId, senderId, senderName, message }, privateRooms) => {
+  try {
+    const ids = String(roomId).replace('private_', '').split('_').map(Number).filter(n => !isNaN(n));
+    const otroId = ids.find(n => n !== senderId);
+    if (otroId == null) return;
+
+    if (privateRooms.has(roomId) && privateRooms.get(roomId).has(String(otroId))) return;
+
+    const { getModels } = require('../models');
+    const { sequelize } = getModels();
+
+    const titulo = `${senderName || 'Usuario'} te envió un mensaje`;
+    const mensaje = String(message || '').slice(0, 120);
+    const ahora = new Date().toISOString();
+
+    const existente = await sequelize.query(
+      `SELECT idnotificacion FROM notificacion
+       WHERE idusuario = :otroId AND id_relacionado = :senderId
+         AND tipo = 'chat_privado' AND estado = 'pendiente'
+       LIMIT 1`,
+      { replacements: { otroId, senderId }, type: sequelize.QueryTypes.SELECT }
+    );
+
+    if (existente && existente.length > 0) {
+      await sequelize.query(
+        `UPDATE notificacion
+         SET titulo = :titulo, mensaje = :mensaje, created_at = :ahora, updated_at = :ahora
+         WHERE idnotificacion = :id`,
+        { replacements: { titulo, mensaje, ahora, id: existente[0].idnotificacion }, type: sequelize.QueryTypes.UPDATE }
+      );
+    } else {
+      await sequelize.query(
+        `INSERT INTO notificacion (idusuario, titulo, mensaje, tipo, estado, id_relacionado, created_at, updated_at)
+         VALUES (:otroId, :titulo, :mensaje, 'chat_privado', 'pendiente', :senderId, :ahora, :ahora)`,
+        { replacements: { otroId, titulo, mensaje, senderId, ahora }, type: sequelize.QueryTypes.INSERT }
+      );
+    }
+
+    console.log(`✅ [PRIVADO] Notificación persistida para usuario ${otroId} (sala ${roomId})`);
+  } catch (e) {
+    console.warn('❌ [PRIVADO] Error al persistir notificación:', e.message);
+  }
+};
+
 module.exports = (io) => {
   const eventUsers = new Map();
   const privateRooms = new Map(); // Track private room members
@@ -159,6 +203,13 @@ module.exports = (io) => {
         console.error('❌ [PRIVADO] Error guardando en BD:', e.message);
         notificarSala(io, { roomId, userId, userName, role, message });
       }
+
+      await persistirNotificacionPrivada({
+        roomId,
+        senderId: parseInt(userId),
+        senderName: userName,
+        message,
+      }, privateRooms);
     });
 
     socket.on('leave_private', ({ roomId }) => {

@@ -67,6 +67,7 @@ const getUserNotifications = asyncHandler(async (req, res) => {
         mensaje,
         tipo,
         estado,
+        id_relacionado,
         created_at,
         updated_at
        FROM notificacion
@@ -89,6 +90,7 @@ const getUserNotifications = asyncHandler(async (req, res) => {
       mensaje: n.mensaje,
       tipo: n.tipo,
       estado: n.estado,
+      id_relacionado: n.id_relacionado,
       read: n.estado === 'leido',
       created_at: n.created_at,
       // Como no hay id_relacionado, no podemos filtrar por fecha de evento
