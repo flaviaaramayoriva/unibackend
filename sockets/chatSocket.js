@@ -108,7 +108,7 @@ module.exports = (io) => {
         const { ChatMensaje } = getModels();
 
         const historial = await ChatMensaje.findAll({
-          where: { idevento: 0, room_id: roomId },
+          where: { idevento: null, room_id: roomId },
           order: [['createdAt', 'ASC']],
           limit: 100
         });
@@ -118,6 +118,7 @@ module.exports = (io) => {
           userName: m.username,
           role: m.role,
           message: m.message,
+          esBot: m.role === 'bot',
           timestamp: m.created_at || m.createdAt
         })));
         
@@ -144,7 +145,7 @@ module.exports = (io) => {
         const { ChatMensaje } = getModels();
         
         await ChatMensaje.create({
-          idevento: 0,
+          idevento: null,
           idusuario: parseInt(userId),
           username: userName || null,
           role,
@@ -212,7 +213,7 @@ module.exports = (io) => {
         io.to(room).emit('user_list', userList);
 
         const whereHistorial = eventoId === 'general'
-          ? { idevento: 0, room_id: 'general' }
+          ? { idevento: null, room_id: 'general' }
           : { idevento: parseInt(eventoId) };
 
         const historial = await ChatMensaje.findAll({
@@ -226,6 +227,7 @@ module.exports = (io) => {
           userName: m.username,
           role: m.role,
           message: m.message,
+          esBot: m.role === 'bot',
           timestamp: m.created_at || m.createdAt
         })));
 
@@ -322,8 +324,8 @@ module.exports = (io) => {
           const { ChatMensaje } = getModels();
           
           ChatMensaje.create({
-            idevento: eventoId === 'general' ? 0 : parseInt(eventoId),
-            idusuario: 0,
+            idevento: eventoId === 'general' ? null : parseInt(eventoId),
+            idusuario: null,
             username: 'Asistente IA',
             role: 'bot',
             message: respuesta.respuesta,
@@ -343,7 +345,7 @@ module.exports = (io) => {
         const { ChatMensaje } = getModels();
         
         await ChatMensaje.create({
-          idevento: eventoId === 'general' ? 0 : parseInt(eventoId),
+          idevento: eventoId === 'general' ? null : parseInt(eventoId),
           idusuario: parseInt(userId),
           username: userName || null,
           role,
