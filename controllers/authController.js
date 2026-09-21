@@ -393,8 +393,6 @@ const loginUser = async (req, res) => {
   const models =  getModels();
   const User = models.User;
 
-  console.log('---------------------------------------------------------------');
-  console.log('Backend /api/auth/login - req.body recibido:', req.body);
   const { email, password } = req.body;
  
   try {
@@ -403,9 +401,7 @@ const loginUser = async (req, res) => {
       return res.status(400).json({ message: 'Por favor, proporciona correo electrónico y contraseña.' });
     }
 
-    const user = await User.findOne({ where: { email } });
-    
-    console.log('LOGIN ATTEMPT - Usuario encontrado en BD:', user ? user.toJSON() : null); 
+    const user = await User.findOne({ where: { email } }); 
     
     if (!user) {
       console.warn(`Login attempt failed: User not found for email - ${email}`);

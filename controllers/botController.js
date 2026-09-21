@@ -701,11 +701,15 @@ function procesarCrearGuiado(senderKey, message) {
 
   if (intentInicio) {
     sesionesCrearApp.set(senderKey, { step: 'nombre', data: {} });
-    return { reply: '¡Claro! Vamos a crear tu evento. ✏️ ¿Cuál es el **nombre** del evento?' };
+    return { reply: '¡Claro! Vamos a crear tu evento. ✏️ ¿Cuál es el **nombre** del evento?\n\nℹ️ Puedes cancelar en cualquier momento con el botón **✖️ Cancelar**.' };
   }
 
   if (/^(cancelar|cancela|cancel|salir|detener|parar)\b/i.test(t)) {
+    const activa = sesionesCrearApp.has(senderKey);
     sesionesCrearApp.delete(senderKey);
+    if (!activa) {
+      return { reply: 'ℹ️ No tienes una creación de evento en curso.\n\nEscribe **"crear evento"** o usa el botón ➕ para empezar.' };
+    }
     return { reply: '❌ Creación cancelada. Escribe "crear evento" cuando quieras intentar de nuevo.' };
   }
 

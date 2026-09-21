@@ -133,10 +133,8 @@ module.exports = (sequelize,DataTypes) => {
       },
       beforeUpdate: async (user) => {
         if (user.changed('contrasenia')) {
-          console.log('Hook beforeUpdate - Contraseña CAMBIÓ, hasheando de nuevo. ANTES:', user.previous('contrasenia'), 'NUEVA (antes de hash):', user.contrasenia);
           const salt = await bcrypt.genSalt(10);
           user.contrasenia = await bcrypt.hash(user.contrasenia, salt);
-          console.log('Hook beforeUpdate - Contraseña DESPUÉS del hash:', user.contrasenia);
         }
       },
     },
