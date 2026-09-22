@@ -547,9 +547,10 @@ function responderPorKeywords(mensaje, eventosContexto) {
   return null;
 }
 
-async function askGemini(userMessage, senderInfo = 'Invitado', eventosContexto = "", history = []) {
+async function askGemini(userMessage, senderInfo = 'Invitado', eventosContexto = "", history = [], options = {}) {
   console.log('🔍 [askGemini] Mensaje:', userMessage);
   
+  const pedirCrearEvento = !!(options && options.pedirCrearEvento);
   const respuestaRapida = responderPorKeywords(userMessage, eventosContexto);
   if (respuestaRapida) {
     console.log('✅ [askGemini] Respuesta por keywords:', respuestaRapida.substring(0, 80));
@@ -579,6 +580,8 @@ async function askGemini(userMessage, senderInfo = 'Invitado', eventosContexto =
 - Empieza con una frase corta y amable, termina con una pregunta de ayuda.
 - Responde SIEMPRE en español.
 
+${pedirCrearEvento ? `📝 Si el usuario quiere CREAR un evento, escribe primero "¡Claro! Te ayudo a crear el evento ✍️" y luego pregunta SOLO los datos que faltan (nombre, fecha, hora, lugar) de forma breve y amable. No inventes datos.` : ''}
+
 📊 CONTEXTO DEL SISTEMA (TUS EVENTOS REALES):
 ${eventosContexto || "Sin eventos registrados."}`;
 
@@ -602,49 +605,85 @@ ${eventosContexto || "Sin eventos registrados."}`;
     return `📊 **Tus eventos (IA desactivada):**\n\n${eventosContexto || "Sin eventos registrados."}\n\n💡 Para activar IA: configura GEMINI_API_KEY en .env`;
   }
 
+  // Tool para que Gemini estructure los datos cuando el usuario quiere crear un evento
+  const TOOLS_CREAR = [{
+    functionDeclarations: [{
+      name: 'crear_evento',
+      description: 'Devuelve los datos estructurados del evento que el usuario quiere crear (nombre, fecha, hora, lugar y descripción si las proporciona). Usar SOLO cuando el usuario pida crear/registrar/programar un evento y haya dado al menos el nombre.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          nombreevento: { type: 'string', description: 'Nombre del evento' },
+          fecha: { type: 'string', description: 'Fecha en formato YYYY-MM-DD si la indica' },
+          hora: { type: 'string', description: 'Hora en formato HH:MM de 24 h si la indica' },
+          lugar: { type: 'string', description: 'Lugar si lo indica' },
+          descripcion: { type: 'string', description: 'Descripción breve si la indica' }
+        },
+        required: ['nombreevento']
+      }
+    }]
+  }];
+
+  // Los modelos más estables/confiables primero
   const modelCandidates = [
-    'gemini-3.5-flash',
-    'gemini-flash-latest', 
-    'gemini-3.6-flash',
-    'gemini-flash-lite-latest',
-    'gemini-3.1-flash-lite',
+    'gemini-flash-latest',
     'gemini-2.5-pro',
+    'gemini-2.0-flash',
+    'gemini-3.5-flash',
   ];
 
-  for (const modelName of modelCandidates) {
-    for (const prefix of ['', 'models/']) {
-      const fullName = `${prefix}${modelName}`;
-      try {
-        const model = genAI.getGenerativeModel({ 
-          model: fullName,
-          systemInstruction: SYSTEM_PROMPT
-        });
+  const TIMEOUT_MS = 15000;
 
-        const result = await model.generateContent({ contents });
-        console.log(`✅ [askGemini] Modelo funcionando: ${fullName}`);
-        return result.response.text();
-        
-      } catch (err) {
-        console.error(`❌ Error con ${fullName}:`, err.message);
-        
-        // Fallback sin systemInstruction
-        try {
-          const model = genAI.getGenerativeModel({ model: fullName });
-          const fallbackContents = [
-            { role: 'user', parts: [{ text: `${SYSTEM_PROMPT}\n\nPregunta: ${userMessage}` }] },
-            ...contents.slice(1)
-          ];
-          const result = await model.generateContent({ contents: fallbackContents });
-          console.log(`✅ [askGemini] Fallback funcionando: ${fullName}`);
-          return result.response.text();
-        } catch (fallbackErr) {
-          console.error(`❌ Fallback también falló para ${fullName}:`, fallbackErr.message);
-        }
-      }
+  const construir = (modelName) => genAI.getGenerativeModel(
+    {
+      model: modelName,
+      systemInstruction: SYSTEM_PROMPT,
+      generationConfig: { temperature: pedirCrearEvento ? 0.2 : 0.4 },
+    },
+    { timeout: TIMEOUT_MS }
+  );
+
+  const preparaContents = () => pedirCrearEvento
+    ? [{ role: 'user', parts: [{ text: userMessage }] }]
+    : contents;
+
+  const ejecutar = async (modelName) => {
+    const model = construir(modelName);
+    const result = await model.generateContent({ contents: preparaContents(), ...(pedirCrearEvento ? { tools: TOOLS_CREAR } : {}) });
+    const fns = result.response.functionCalls && result.response.functionCalls();
+    if (fns && fns.length) {
+      const fn = fns.find(f => f.name === 'crear_evento') || fns[0];
+      return { tipo: 'crear_evento', datos: fn.args || {}, modelo: modelName };
     }
+    return { tipo: 'texto', texto: result.response.text(), modelo: modelName };
+  };
+
+  // Intentos en paralelo: responde el primer modelo que lo logre.
+  // Si un modelo falla o tarda, no bloquea a los demás (antes se probaban en
+  // serie y cualquier 503 encadenaba hasta >1 min de espera).
+  const intentar = (m) => Promise.resolve().then(() => ejecutar(m));
+
+  try {
+    const r = await Promise.any(modelCandidates.map(intentar));
+    console.log(`✅ [askGemini] Modelo funcionando: ${r.modelo}`);
+    return r; // { tipo: 'texto', texto } o { tipo: 'crear_evento', datos }
+  } catch (err) {
+    const detalles = (err && err.errors || []).map(e => (e && e.message) || '?').join(' | ');
+    console.error('❌ [askGemini] Todos los modelos fallaron:', detalles || (err && err.message));
   }
+
+  // Reintento único al modelo principal tras una breve espera (los 503/429
+  // de Google son transitorios por alta demanda).
+  await new Promise(res => setTimeout(res, 800));
+  try {
+    const primer = await ejecutar(modelCandidates[0]);
+    console.log(`✅ [askGemini] Reintento funcionando: ${primer.modelo}`);
+    return primer;
+  } catch (err) {
+    console.error(`❌ [askGemini] Reintento con ${modelCandidates[0]}:`, err.message);
+  }
+
   // Fallback final: usar el contexto rico que ya tenemos (sin IA)
-  // El contexto ya tiene TODOS los eventos del usuario con detalles completos
   if (eventosContexto && eventosContexto !== "Sin eventos registrados.") {
     return `📊 **Tus eventos (modo offline - IA no disponible):**\n\n${eventosContexto}\n\n💡 La IA está temporalmente indisponible, pero aquí tienes tus datos completos.`;
   }
@@ -659,11 +698,100 @@ function getMessage() {
   try { return getModels()?.Message || null; } catch { return null; }
 }
 
+// Convierte la salida de askGemini (string u objeto) a texto plano para
+// canales que solo usan texto (Telegram).
+const textoDeRespuesta = (r) => {
+  if (r && typeof r === 'object') return r.texto || 'No pude conectar con la IA. Inténtalo de nuevo.';
+  return r || '';
+};
+
 // ============================================================
-// ASISTENTE GUIADO PARA CREAR EVENTOS (chat de la app)
-// Guía datos básicos y luego remite al formulario /admin/craq
+// ASISTENTE GUIADO PARA CREAR EVENTOS (chat de la app y Telegram)
+// Guía datos básicos y luego remite al formulario /admin/craq,
+// o crea el evento directamente en BD (opts.crearDirecto).
 // ============================================================
 const sesionesCrearApp = new Map();
+
+function _minutosDelDia(hora) {
+  if (!hora) return null;
+  const m = String(hora).match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+function _parseFechaEvento(texto) {
+  const t = String(texto || '').trim();
+  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return `${m[3]}-${String(m[2]).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`;
+  return null;
+}
+
+// Crea un evento básico en estado "pendiente" replicando las reglas de
+// proyectoController (límite 2 eventos/día y no chocar en rango de 2 h).
+async function crearEventoEnBD(models, usuarioId, datos) {
+  const nombre = String(datos.nombreevento || '').trim();
+  const fecha = _parseFechaEvento(datos.fechaevento);
+  if (!nombre || !fecha) {
+    return { ok: false, mensaje: 'Faltan el nombre y la fecha del evento (usar formato YYYY-MM-DD o DD/MM/YYYY).' };
+  }
+
+  const { Evento } = models;
+  const fechaISO = fecha.slice(0, 10);
+  const horaevento = datos.horaevento ? String(datos.horaevento) : null;
+
+  try {
+    const eventosDelDia = await models.sequelize.query(
+      `SELECT idevento, horaevento FROM evento
+       WHERE CAST(fechaevento AS DATE) = CAST(:fecha AS DATE)
+         AND estado IN ('pendiente', 'aprobado')
+       ORDER BY horaevento ASC`,
+      { replacements: { fecha: fechaISO }, type: models.sequelize.QueryTypes.SELECT }
+    );
+
+    if (eventosDelDia.length >= 2) {
+      return { ok: false, mensaje: `El día ${fechaISO} ya tiene 2 eventos programados (máximo permitido por día). Prueba con otra fecha.` };
+    }
+
+    const minNueva = _minutosDelDia(horaevento);
+    const conflicto = eventosDelDia.find(e => {
+      const minEx = _minutosDelDia(e.horaevento);
+      return minNueva !== null && minEx !== null && Math.abs(minNueva - minEx) < 120;
+    });
+    if (conflicto) {
+      return { ok: false, mensaje: 'Ya existe un evento pendiente o aprobado el mismo día a la misma hora (rango de 2 horas). Prueba con otra hora.' };
+    }
+
+    const nuevoEvento = await Evento.create({
+      nombreevento: nombre.slice(0, 255),
+      lugarevento: (datos.lugarevento || 'Por definir').toString().slice(0, 255),
+      fechaevento: new Date(fecha + 'T12:00:00'),
+      horaevento: horaevento,
+      descripcion: datos.descripcion || null,
+      idacademico: usuarioId,
+      evento_externo: false,
+      estado: 'pendiente',
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    // Asignar fase inicial (nrofase 1), igual que el formulario normal
+    const Fase = models.Fase;
+    if (Fase) {
+      const faseMaestra = await Fase.findOne({ where: { nrofase: 1 }, attributes: ['idfase'] });
+      if (faseMaestra) {
+        nuevoEvento.idfase = faseMaestra.idfase;
+        await nuevoEvento.save();
+      }
+    }
+
+    return { ok: true, idevento: nuevoEvento.idevento, evento: nuevoEvento };
+  } catch (e) {
+    console.error('❌ Error al crear evento vía Telegram/I.A:', e.message);
+    return { ok: false, mensaje: 'Ocurrió un error interno al guardar el evento. Inténtalo de nuevo o créalo desde la app.' };
+  }
+}
 
 function _parseHoraGuia(texto) {
   const t = texto.trim().toLowerCase();
@@ -695,9 +823,24 @@ function _parseFechaGuia(texto) {
   return null;
 }
 
-function procesarCrearGuiado(senderKey, message) {
+function detectarIntencionCrear(t) {
+  const s = (t || '').trim();
+  const bajo = s.toLowerCase();
+  if (!/(crear|registrar|programar|agendar|nuevo evento|nueva actividad)\b/.test(bajo)) return false;
+
+  // Comando simple ("crear evento", "crear", "nuevo evento") → lo atiende el
+  // flujo guiado paso a paso, no Gemini.
+  const resto = s.replace(/^(crear evento|registrar evento|programar evento|agendar evento|nuevo evento|crear un|registrar un|programar un|agendar un|crear|registrar|programar|agendar)\b/i, '').trim();
+  if (!resto) return false;
+  const limpio = resto.replace(/^(un|una|el|la|evento|actividad)\b/i, '').trim();
+  return limpio.length > 2;
+}
+
+async function procesarCrearGuiado(senderKey, message, opts = {}) {
   const t = (message || '').trim();
-  const intentInicio = /^(crear evento|nuevo evento|crear)\b/i.test(t);
+  const bajo = t.toLowerCase();
+  const COMANDOS_INICIO = ['crear evento', 'nuevo evento', 'crear', 'registrar evento', 'programar evento', 'agendar evento', 'registrar', 'programar', 'agendar', 'crear un evento', 'nuevo evento'];
+  const intentInicio = COMANDOS_INICIO.includes(bajo);
 
   if (intentInicio) {
     sesionesCrearApp.set(senderKey, { step: 'nombre', data: {} });
@@ -747,6 +890,29 @@ function procesarCrearGuiado(senderKey, message) {
   if (step === 'lugar') {
     data.lugarevento = t.slice(0, 100);
     sesionesCrearApp.delete(senderKey);
+
+    if (opts.crearDirecto && opts.models && opts.usuarioId) {
+      const r = await crearEventoEnBD(opts.models, opts.usuarioId, data);
+      sesionesCrearApp.delete(senderKey);
+      if (!r.ok) {
+        const msg = `\n\n❌ ${r.mensaje}\n\nPuedes intentarlo con el comando /crear o "crear evento".`;
+        const summary = `✅ **¡Listo!** Estos son los datos de tu evento:\n\n` +
+          `📝 Nombre: **${data.nombreevento}**\n` +
+          `⏰ Hora: **${data.horaevento}**\n` +
+          `📅 Fecha: **${data.fechaevento}**\n` +
+          `📍 Lugar: **${data.lugarevento}**\n${msg}`;
+        return { reply: summary };
+      }
+      const params = [
+        `nombreevento=${encodeURIComponent(data.nombreevento)}`,
+        `selectedDate=${encodeURIComponent(data.fechaevento)}`,
+        `selectedHour=${encodeURIComponent(data.horaevento.split(':')[0])}`,
+        `lugarevento=${encodeURIComponent(data.lugarevento)}`
+      ].join('&');
+      const creado = `✅ ¡Evento creado con éxito en estado **pendiente**!\n\n📝 ${r.evento.nombreevento}\n⏰ ${r.evento.horaevento}\n📅 ${r.evento.fechaevento}\n📍 ${r.evento.lugarevento}\n🆔 ID: ${r.idevento}\n\n📲 Completa los detalles restantes (presupuesto, comité, resultados) desde la app:\n${opts.abrirFormulario || `/admin/croq?${params}`}`;
+      return { reply: creado, abrirFormulario: opts.abrirFormulario || `/admin/croq?${params}` };
+    }
+
     const params = [
       `nombreevento=${encodeURIComponent(data.nombreevento)}`,
       `selectedDate=${encodeURIComponent(data.fechaevento)}`,
@@ -774,9 +940,11 @@ const appChat = async (req, res) => {
 
     if (!message?.trim()) return res.status(400).json({ error: 'Mensaje vacío' });
 
+    const pedirCrearEvento = detectarIntencionCrear(message);
+
     // ── Asistente guiado para crear evento ──
     const senderKey = String(sender || 'invitado');
-    const guia = procesarCrearGuiado(senderKey, message);
+    const guia = await procesarCrearGuiado(senderKey, message, opts = {});
     if (guia) {
       return res.json({ reply: guia.reply, eventId: eventId || null, abrirFormulario: guia.abrirFormulario || null });
     }
@@ -895,7 +1063,36 @@ const appChat = async (req, res) => {
       eventosContexto += `\n\n📊 ESTADÍSTICAS:\n✅ Aprobados: ${aprobados}\n⏳ Pendientes: ${pendientes}\n❌ Rechazados: ${rechazados}`;
     }
 
-    const reply = await askGemini(message, sender, eventosContexto, history);
+    let respuesta = await askGemini(message, sender, eventosContexto, history, { pedirCrearEvento });
+    let abrirFormulario = null;
+
+    // Gemini utilizó la tool "crear_evento": estructuramos la confirmación
+    // y llevamos al usuario al formulario /admin/craq ya precargado.
+    if (respuesta && typeof respuesta === 'object' && respuesta.tipo === 'crear_evento') {
+      const datos = respuesta.datos || {};
+      const nombre = datos.nombreevento || '';
+      const fecha = datos.fecha || '';
+      const hora = (datos.hora || '').split(':')[0];
+      const lugar = datos.lugar || '';
+
+      const params = [
+        `nombreevento=${encodeURIComponent(nombre)}`,
+        `selectedDate=${encodeURIComponent(fecha)}`,
+        `selectedHour=${encodeURIComponent(hora)}`,
+        `lugarevento=${encodeURIComponent(lugar)}`
+      ].join('&');
+
+      respuesta = `✅ **¡Perfecto! Te ayudo a crear tu evento.**\n\n` +
+        `📝 Nombre: **${nombre}**\n` +
+        (fecha ? `📅 Fecha: **${fecha}**\n` : '') +
+        (datos.hora ? `⏰ Hora: **${datos.hora}**\n` : '') +
+        (lugar ? `📍 Lugar: **${lugar}**\n` : '') +
+        (datos.descripcion ? `📝 Descripción: **${datos.descripcion}**\n` : '') +
+        `\n✍️ Completa los detalles restantes en el formulario y confirma tu evento.`;
+      abrirFormulario = `/admin/craq?${params}`;
+    } else if (respuesta && typeof respuesta === 'object' && respuesta.tipo === 'texto') {
+      respuesta = respuesta.texto;
+    }
 
     if (Message && sender !== 'invitado' && sender !== 'anonymous') {
       await Promise.all([
@@ -908,7 +1105,7 @@ const appChat = async (req, res) => {
         }),
         Message.create({ 
           sender, 
-          text: reply, 
+          text: respuesta, 
           role: 'bot', 
           idevento: eventId || null, 
           timestamp: new Date() 
@@ -916,7 +1113,7 @@ const appChat = async (req, res) => {
       ]);
     }
 
-    res.json({ reply, eventId });
+    res.json({ reply: respuesta, eventId, abrirFormulario });
   } catch (error) {
     console.error('❌ Error en appChat:', error);
     res.status(500).json({ error: 'Error interno al procesar la solicitud.' });
@@ -1706,13 +1903,12 @@ Si quieres volver a vincular tu cuenta, envía tu email institucional.`;
         return res.status(200).send('OK');
       }
 
-      const pregunta = chatBotService.extraerPregunta('crear evento');
-      const respuesta = await chatBotService.generarRespuesta(pregunta, null, usuario.idusuario);
-
+      const guia = await procesarCrearGuiado('tg:' + chatId, 'crear evento', { crearDirecto: true, models, usuarioId: usuario.idusuario });
+      const out = guia.reply + (guia.abrirFormulario ? `\n\n📲 Completa los detalles desde la app:\n${guia.abrirFormulario}` : '');
       await axios.post(`${TELEGRAM_API}/sendMessage`, {
         chat_id: chatId,
-        text: respuesta.respuesta || 'Escribe "crear evento" para empezar.',
-        parse_mode: 'HTML',
+        text: out,
+        parse_mode: 'Markdown',
       });
 
       return res.status(200).send('OK');
@@ -1786,21 +1982,60 @@ Si quieres volver a vincular tu cuenta, envía tu email institucional.`;
       }
 
       eventosContexto += `📊 **RESUMEN:** ✅ ${stats.aprobados} | ⏳ ${stats.pendientes} | ❌ ${stats.rechazados}\n`;
-      eventosContexto += `👤 **Usuario:** ${usuario.nombre} ${usuario.apellidopat || ''} (${usuario.email})\n`;
+eventosContexto += `👤 **Usuario:** ${usuario.nombre} ${usuario.apellidopat || ''} (${usuario.email})\n`;
       eventosContexto += `🎭 **Rol:** ${usuario.role || 'usuario'}`;
     }
 
-    const reply = await askGemini(text, usuario?.nombre || 'Usuario', eventosContexto, []);
-    
-    const finalReply = reply.length > 4000 ? reply.substring(0, 4000) + '...' : reply;
+    // ── Intención de crear evento por Telegram ──
+    let usarGemini = true;
 
-    await axios.post(`${TELEGRAM_API}/sendMessage`, {
-      chat_id: chatId,
-      text: finalReply,
-      parse_mode: 'HTML',
-    });
+    if (detectarIntencionCrear(text) ||
+        ['crear evento','nuevo evento','crear','registrar evento','programar evento','agendar evento','registrar','programar','agendar','crear un evento'].includes(text.toLowerCase().trim())) {
+      const pedirCrear = true;
+      const replyRaw = await askGemini(text, usuario?.nombre || 'Usuario', eventosContexto, [], { pedirCrearEvento: pedirCrear });
+      if (replyRaw && typeof replyRaw === 'object' && replyRaw.tipo === 'crear_evento') {
+        const datos = replyRaw.datos || {};
+        const r = await crearEventoEnBD(models, usuario.idusuario, {
+          nombreevento: datos.nombreevento,
+          fechaevento: datos.fecha,
+          horaevento: datos.hora,
+          lugarevento: datos.lugar,
+          descripcion: datos.descripcion
+        });
+        if (r.ok) {
+          const params = [
+            `nombreevento=${encodeURIComponent(datos.nombreevento || '')}`,
+            `selectedDate=${encodeURIComponent(datos.fecha || '')}`,
+            `selectedHour=${encodeURIComponent((datos.hora || '').split(':')[0])}`,
+            `lugarevento=${encodeURIComponent(datos.lugar || '')}`
+          ].join('&');
+          await axios.post(`${TELEGRAM_API}/sendMessage`, {
+            chat_id: chatId,
+            text: `✅ ¡Evento creado con éxito!\n\n📝 ${datos.nombreevento || 'Sin nombre'}\n⏰ ${datos.hora || 'Sin hora'}\n📅 ${datos.fecha || 'Sin fecha'}\n📍 ${datos.lugar || 'Sin lugar'}\n🆔 ID: ${r.idevento}\n\n📲 Puedes completar detalles (presupuesto, comité, resultados) desde la app:\n${'/admin/croq?' + params}`,
+            parse_mode: 'Markdown',
+          });
+        } else {
+          await axios.post(`${TELEGRAM_API}/sendMessage`, {
+            chat_id: chatId,
+            text: `❌ No pude crear el evento: ${r.mensaje}\n\nInténtalo de nuevo con "crear evento".`,
+            parse_mode: 'Markdown',
+          });
+        }
+        usarGemini = false;
+      }
+    }
 
-  } catch (error) { 
+    if (usarGemini) {
+      const reply = textoDeRespuesta(await askGemini(text, usuario?.nombre || 'Usuario', eventosContexto, []));
+      const finalReply = reply.length > 4000 ? reply.substring(0, 4000) + '...' : reply;
+
+      await axios.post(`${TELEGRAM_API}/sendMessage`, {
+        chat_id: chatId,
+        text: finalReply,
+        parse_mode: 'HTML',
+      });
+    }
+  } catch (error) {
     console.error('❌ [TELEGRAM] Error:', error.message);
     console.error('❌ Response data:', error.response?.data);
     
