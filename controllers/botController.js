@@ -680,7 +680,7 @@ ${eventosContexto || "Sin eventos registrados."}`;
   };
 
   try {
-    const r = await Promise.any(modelCandidates.map(intentar));
+    const r = await Promise.any(modelCandidates.map((m) => intentar(m)()));
     const modeloNombre = r?.modelo || modelCandidates[0] || 'desconocido';
     console.log(`✅ [askGemini] Modelo funcionando: ${modeloNombre}`);
     return r; // { tipo: 'texto', texto } o { tipo: 'crear_evento', datos }
@@ -694,7 +694,8 @@ ${eventosContexto || "Sin eventos registrados."}`;
   await new Promise(res => setTimeout(res, 800));
   try {
     const primer = await ejecutar(modelCandidates[0]);
-    console.log(`✅ [askGemini] Reintento funcionando: ${primer.modelo}`);
+    const modeloNombre = primer?.modelo || modelCandidates[0] || 'desconocido';
+    console.log(`✅ [askGemini] Reintento funcionando: ${modeloNombre}`);
     return primer;
   } catch (err) {
     console.error(`❌ [askGemini] Reintento con ${modelCandidates[0]}:`, err.message);
