@@ -39,9 +39,14 @@ const marcarEventosVencidos = async () => {
     const ahoraLocal = new Date(Date.now() - 4 * 60 * 60 * 1000);
     const hoyLocal = ahoraLocal.toISOString().slice(0, 10);   // YYYY-MM-DD
     const horaLocal = ahoraLocal.toISOString().slice(11, 16); // HH:mm
-    console.log('📅 Hoy (local UTC-4):', hoyLocal, horaLocal);
 
-    // Candidatos: aprobados/activos cuya fecha ya pasó o es hoy (la hora se revisa en JS)
+    // 🕓 PERIODO DE GRACIA: el evento solo se marca 'vencido' cuando pasaron
+    // 3 días desde la fecha del evento, para permitir elaborar el informe.
+    const haceTresDias = new Date(ahoraLocal.getTime() - 3 * 24 * 60 * 60 * 1000);
+    const fechaTope = haceTresDias.toISOString().slice(0, 10); // YYYY-MM-DD
+    console.log('📅 Hoy (local UTC-4):', hoyLocal, horaLocal, '| Vence desde fecha <', fechaTope);
+
+    // Candidatos: aprobados/activos cuya fecha ya pasó (o pasó hace hasta 3 días)
     const candidatos = await Evento.findAll({
       where: {
         [Op.and]: [
@@ -54,9 +59,10 @@ const marcarEventosVencidos = async () => {
     const porVencer = [];
     candidatos.forEach(e => {
       const fechaEv = String(e.fechaevento || '').slice(0, 10);
-      if (fechaEv < hoyLocal) {
+      if (fechaEv < fechaTope) {
         porVencer.push(e);
-      } else if (fechaEv === hoyLocal) {
+      } else if (fechaEv === fechaTope) {
+        // El evento terminó hace exactamente 3 días: vence solo si su hora ya pasó
         const horaEv = String(e.horaevento || '').slice(0, 5);
         const esHoraValida = /^\d{2}:\d{2}$/.test(horaEv);
         if (esHoraValida && horaEv < horaLocal) porVencer.push(e);
