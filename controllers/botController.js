@@ -625,14 +625,14 @@ ${eventosContexto || "Sin eventos registrados."}`;
   }];
 
   // Los modelos más estables/confiables primero
+  // Actualizados según recomendaciones de Google por deprecaciones y alta demanda
   const modelCandidates = [
+    'gemini-3.1-pro-preview',
+    'gemini-3.6-flash',
     'gemini-flash-latest',
-    'gemini-2.5-pro',
-    'gemini-2.0-flash',
-    'gemini-3.5-flash',
   ];
 
-  const TIMEOUT_MS = 15000;
+  const TIMEOUT_MS = 30000;
 
   const construir = (modelName) => genAI.getGenerativeModel(
     {
@@ -661,7 +661,22 @@ ${eventosContexto || "Sin eventos registrados."}`;
   // Intentos en paralelo: responde el primer modelo que lo logre.
   // Si un modelo falla o tarda, no bloquea a los demás (antes se probaban en
   // serie y cualquier 503 encadenaba hasta >1 min de espera).
-  const intentar = (m) => Promise.resolve().then(() => ejecutar(m));
+  const intentar = (m) => {
+    let attempts = 0;
+    const maxAttempts = 3;
+    
+    return async () => {
+      while (attempts < maxAttempts) {
+        attempts++;
+        try {
+          return await ejecutar(m);
+        } catch (e) {
+          if (attempts >= maxAttempts) throw e;
+          await new Promise(res => setTimeout(res, 1000 * attempts));
+        }
+      }
+    };
+  };
 
   try {
     const r = await Promise.any(modelCandidates.map(intentar));
