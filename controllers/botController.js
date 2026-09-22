@@ -681,7 +681,8 @@ ${eventosContexto || "Sin eventos registrados."}`;
 
   try {
     const r = await Promise.any(modelCandidates.map(intentar));
-    console.log(`✅ [askGemini] Modelo funcionando: ${r.modelo}`);
+    const modeloNombre = r?.modelo || modelCandidates[0] || 'desconocido';
+    console.log(`✅ [askGemini] Modelo funcionando: ${modeloNombre}`);
     return r; // { tipo: 'texto', texto } o { tipo: 'crear_evento', datos }
   } catch (err) {
     const detalles = (err && err.errors || []).map(e => (e && e.message) || '?').join(' | ');
