@@ -34,7 +34,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       field: 'estado',
       validate: {
-        isIn: [['pendiente', 'aprobado', 'rechazado', 'cancelado', 'vencido', 'completado']]
+        isIn: [['pendiente', 'aprobado', 'rechazado', 'cancelado', 'vencido', 'completado', 'finalizado']]
       }
     },
   

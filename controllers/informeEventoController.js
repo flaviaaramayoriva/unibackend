@@ -152,7 +152,7 @@ const guardarInformeEvento = async (req, res) => {
   
   try {
     const models = getModels();
-    const { InformeEvento, Evento, Resultado, Egreso, Ingreso, Presupuesto } = models;
+    const { InformeEvento, Evento, Resultado, Egreso, Ingreso, Presupuesto, Fase } = models;
     const idevento = Number(req.params.id);
     
     if (isNaN(idevento)) return res.status(400).json({ message: 'ID de evento inválido' });
@@ -340,6 +340,22 @@ const guardarInformeEvento = async (req, res) => {
     }
 
     console.log('✅ [guardarInformeEvento] Todo guardado con éxito');
+
+    // 5. 🔄 MARCAR EL EVENTO COMO FINALIZADO si el informe se finaliza
+    if (estado === 'finalizado') {
+      try {
+        const faseMax = await Fase.findOne({ order: [['nrofase', 'DESC']] });
+        const idfaseFinal = faseMax ? faseMax.idfase : evento.idfase;
+        await Evento.update(
+          { idfase: idfaseFinal, estado: 'finalizado', updated_at: new Date() },
+          { where: { idevento } }
+        );
+        console.log(`   ✅ [guardarInformeEvento] Evento ${idevento} marcado como finalizado (idfase: ${idfaseFinal})`);
+      } catch (err) {
+        console.error('   ❌ [guardarInformeEvento] Error al finalizar el evento:', err.message);
+      }
+    }
+
     return res.json({ 
       message: creado ? 'Informe creado correctamente' : 'Informe actualizado correctamente', 
       informe 

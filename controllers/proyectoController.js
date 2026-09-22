@@ -1208,7 +1208,7 @@ const finalizarInformeEvento = asyncHandler(async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Informe finalizado correctamente. El evento ha pasado a Fase 3.',
+      message: 'Informe finalizado correctamente. El evento ha pasado a Fase 5 (Cierre e informe).',
       data: { idevento, idfase: fase3.idfase, estado: 'finalizado' }
     });
 
@@ -1637,7 +1637,7 @@ const getEventosAprobadosPorFacultad = asyncHandler(async (req, res) => {
     if (userRole === 'admin' || userRole === 'daf') {
       console.log('👑 Admin/DAF: Obteniendo TODOS los eventos aprobados');
       eventos = await Evento.findAll({
-        where: { estado: 'aprobado' },
+        where: { estado: estadosPermitidos },
         distinct: true,
         attributes: { include: ['idfase'] },
         include: [{
