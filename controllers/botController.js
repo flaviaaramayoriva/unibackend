@@ -699,7 +699,7 @@ ${eventosContexto || "Sin eventos registrados."}`;
     return primer;
   } catch (err) {
     console.error(`❌ [askGemini] Reintento con ${modelCandidates[0]}:`, err.message);
-    return '❌ La IA está teniendo problemas técnicos. Pero tus eventos se muestran arriba ⬆️.';
+    return '❌ La IA está teniendo problemas técnicas. Pero tus eventos se muestran arriba ⬆️.';
   }
 
   // Fallback final: usar el contexto rico que ya tenemos (sin IA)
@@ -707,8 +707,11 @@ ${eventosContexto || "Sin eventos registrados."}`;
     return `📊 **Tus eventos (modo offline - IA no disponible):**\n\n${eventosContexto}\n\n💡 La IA está temporalmente indisponible, pero aquí tienes tus datos completos.`;
   }
   
+  // Si no hay contexto y el mensaje contiene "hola", saludar
   const msgLower = userMessage.toLowerCase();
-  if (msgLower.includes('hola') || msgLower.includes('buenas')) return '¡Hola! ¿En qué te ayudo? Prueba: "pendientes", "resumen", "crear evento".';
+  if (msgLower.startsWith('hola') || msgLower.includes(' ¡hola') || msgLower.startsWith('hola ')) {
+    return '¡Hola! 👋 Soy tu asistente de eventos UNIFRANZ. Tengo acceso a tus eventos reales. Pregúntame:\n• "¿Qué eventos tengo pendientes?"\n• "Muéstrame mis eventos aprobados"\n• "Resumen de mis eventos"\n• "Eventos rechazados y motivos"\n• "Crear evento"\n• "Próximos eventos"';
+  }
   if (msgLower.includes('gracias')) return '¡De nada! 😊 ¿Algo más en lo que ayude?';
   return 'No pude conectar con la IA. Pero tus eventos se cargan arriba ⬆️ si estás vinculado.';
 }
