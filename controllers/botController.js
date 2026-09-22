@@ -696,6 +696,7 @@ ${eventosContexto || "Sin eventos registrados."}`;
     return primer;
   } catch (err) {
     console.error(`❌ [askGemini] Reintento con ${modelCandidates[0]}:`, err.message);
+    return '❌ La IA está teniendo problemas técnicos. Pero tus eventos se muestran arriba ⬆️.';
   }
 
   // Fallback final: usar el contexto rico que ya tenemos (sin IA)
@@ -1107,6 +1108,15 @@ const appChat = async (req, res) => {
       abrirFormulario = `/admin/craq?${params}`;
     } else if (respuesta && typeof respuesta === 'object' && respuesta.tipo === 'texto') {
       respuesta = respuesta.texto;
+    }
+
+    // Asegurar que respuesta sea siempre un string para Message.create
+    if (respuesta && typeof respuesta !== 'string') {
+      if (typeof respuesta === 'object' && respuesta.texto) {
+        respuesta = respuesta.texto;
+      } else {
+        respuesta = String(respuesta);
+      }
     }
 
     if (Message && sender !== 'invitado' && sender !== 'anonymous') {
