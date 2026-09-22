@@ -566,6 +566,7 @@ async function askGemini(userMessage, senderInfo = 'Invitado', eventosContexto =
 - Si pide "resumen" → USA los datos del contexto (cuentas + detalles).
 - Si pide "próximos" → FILTRA eventos aprobados por fecha cercana.
 - Si pregunta por evento específico → BUSCA en el contexto por nombre/ID.
+- Si pide "reporte" → MUESTRA un reporte completo con: cuenta total de eventos por estado, lista de eventos aprobados, pendientes y rechazados con sus detalles, y frase de despedida amable.
 - NUNCA inventes datos. Si no está en el contexto, di: "No tengo esa información en tus eventos actuales".
 
 📋 FORMATO OBLIGATORIO DE CADA EVENTO (no omitas campos que existan en el contexto):
