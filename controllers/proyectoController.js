@@ -1767,6 +1767,7 @@ const getEventosAprobadosPorFacultad = asyncHandler(async (req, res) => {
     title: event.nombreevento || 'Sin título',
     nombreevento: event.nombreevento,  // ← AGREGAR
     description: event.descripcion || 'Sin descripción',
+    estado: event.estado || 'pendiente',  // ← AGREGAR (para filtrar completados/vencidos)
     date: event.fechaevento ? new Date(event.fechaevento).toLocaleDateString('es-ES') : 'N/A',
     fechaevento: event.fechaevento,  // ← AGREGAR (formato ISO para el filtro)
     fecha_inicio: event.fechaevento,  // ← AGREGAR (por compatibilidad)
