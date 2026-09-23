@@ -350,33 +350,24 @@ async function generarPDFEvento(evento, usuario) {
   const FONDO_SEC = '#fff3ec';
   const BORDE_CLARO = '#e8e8e8';
 
-  const celdaFila = (etiqueta, valor, y, alto, filaNaranja) => {
-    doc.rect(50, y, 260, alto).strokeColor('#e3e3e3').lineWidth(0.6).stroke();
-    doc.rect(310, y, 240, alto).strokeColor('#e3e3e3').lineWidth(0.6).stroke();
-    doc.fillColor(NARANJA).font('Helvetica-Bold').fontSize(8.5)
-      .text(etiqueta + ':', 56, y + 3, { width: 248, height: alto - 4, lineBreak: true });
-    doc.fillColor('#222222').font('Helvetica').fontSize(9)
-      .text(String(valor ?? '—'), 316, y + 3, { width: 228, height: alto - 4, lineBreak: true });
-    doc.y = y + alto;
-  };
-
-  const seccionTitulo = (texto, numero) => {
-    asegurarPagina(70);
-    doc.moveDown(0.7);
-    doc.save();
-    doc.roundedRect(50, doc.y, 4, 16, 2).fill(NARANJA);
-    doc.fillColor(AZUL).font('Helvetica-Bold').fontSize(12.5)
-      .text(`${numero ? numero + '. ' : ''}${texto}`, 60, doc.y);
-    doc.moveDown(0.4);
-    const yLinea = doc.y;
-    doc.strokeColor(NARANJA).lineWidth(1.4).moveTo(50, yLinea).lineTo(550, yLinea).stroke();
-    doc.moveDown(0.5);
-    doc.font('Helvetica').fontSize(10).fillColor('#222222');
-    doc.restore();
-  };
-
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    let drawing = false;
+    let numeroPagina = 1;
+    const dibujarPie = () => {
+      if (drawing) return;
+      drawing = true;
+      try {
+        doc.save();
+        doc.strokeColor('#dddddd').lineWidth(0.6).moveTo(50, 792).lineTo(545, 792).stroke();
+        doc.fillColor('#999999').font('Helvetica').fontSize(8)
+          .text(`Documento generado el ${new Date().toLocaleString('es-ES')} · Página ${numeroPagina} · UNIFRANZ`, 50, 793, { width: 495, align: 'center', height: 8, lineBreak: false });
+        doc.y = 50;
+        doc.restore();
+      } finally { drawing = false; }
+    };
+    dibujarPie();
+    doc.on('pageAdded', () => { numeroPagina++; dibujarPie(); });
     const stream = new PassThrough();
     const buffers = [];
     doc.pipe(stream);
@@ -386,6 +377,32 @@ async function generarPDFEvento(evento, usuario) {
 
     // ===== HELPERS =====
     const asegurarPagina = (alto) => { if (doc.y > 780 - alto) doc.addPage(); };
+
+    const celdaFila = (etiqueta, valor, y, alto, filaNaranja) => {
+      doc.rect(50, y, 260, alto).strokeColor('#e3e3e3').lineWidth(0.6).stroke();
+      doc.rect(310, y, 240, alto).strokeColor('#e3e3e3').lineWidth(0.6).stroke();
+      doc.fillColor(NARANJA).font('Helvetica-Bold').fontSize(8.5)
+        .text(etiqueta + ':', 56, y + 3, { width: 248, height: alto - 4, lineBreak: true });
+      doc.fillColor('#222222').font('Helvetica').fontSize(9)
+        .text(String(valor ?? '—'), 316, y + 3, { width: 228, height: alto - 4, lineBreak: true });
+      doc.y = y + alto;
+    };
+
+    const seccionTitulo = (texto, numero) => {
+      asegurarPagina(70);
+      doc.moveDown(0.7);
+      doc.save();
+      doc.roundedRect(50, doc.y, 4, 16, 2).fill(NARANJA);
+      doc.fillColor(AZUL).font('Helvetica-Bold').fontSize(12.5)
+        .text(`${numero ? numero + '. ' : ''}${texto}`, 60, doc.y);
+      doc.moveDown(0.4);
+      const yLinea = doc.y;
+      doc.strokeColor(NARANJA).lineWidth(1.4).moveTo(50, yLinea).lineTo(550, yLinea).stroke();
+      doc.moveDown(0.5);
+      doc.font('Helvetica').fontSize(10).fillColor('#222222');
+      doc.restore();
+    };
+
     const fechaLarga = (f) => f ? new Date(f).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
     const fechaCorta = (f) => f ? new Date(f).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }) : 'No especificada';
     const money = (n) => `Bs ${parseFloat(n || 0).toFixed(2)}`;
@@ -411,7 +428,6 @@ async function generarPDFEvento(evento, usuario) {
     doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(26).text('UNIFRANZ', 72, 32);
     doc.fillColor('#ffd9c7').font('Helvetica').fontSize(12).text('Universidad Privada Franz Tamayo', 72, 62);
     doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(17).text('FICHA TÉCNICA DEL EVENTO', 72, 82);
-    doc.endPath();
     doc.restore();
     doc.moveDown(3.2);
 
