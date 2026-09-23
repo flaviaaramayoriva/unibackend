@@ -300,9 +300,21 @@ const formatearEventoRechazado = (evento, index) => {
 };
 
 async function generarPDFEvento(evento, usuario) {
+  // Lee claves tanto de las propiedades de la instancia como de dataValues
+  const obtener = (...claves) => {
+    const buscar = (obj) => {
+      if (!obj) return undefined;
+      for (const c of claves) {
+        if (obj[c] !== undefined && obj[c] !== null) return obj[c];
+      }
+      return undefined;
+    };
+    return buscar(evento) ?? buscar(evento?.dataValues);
+  };
+
   // 🖼️ Pre-descargar imagen del layout (si existe) para incrustarla en el PDF
   let layoutImageBuffer = null;
-  const layoutData = evento.Layout || evento.layout || null;
+  const layoutData = obtener('Layout', 'layout') || null;
   if (layoutData && layoutData.url_imagen) {
     try {
       const base = process.env.API_BASE_URL || 'https://unibackend-production-a0f8.up.railway.app';
@@ -332,16 +344,17 @@ async function generarPDFEvento(evento, usuario) {
     const negrita = (t, opts) => { doc.font('Helvetica-Bold').text(t, opts); doc.font('Helvetica'); };
 
     // Normalizar datos (mayúsculas/minúsculas de aliases)
-    const recursos = evento.Recursos || evento.recursos || [];
-    const comite = evento.comite || evento.Comite || [];
-    const tipos = evento.tiposDeEvento || evento.TiposDeEvento || [];
-    const clasif = evento.clasificacion || evento.Clasificacion || null;
-    const subcat = evento.subcategoria || null;
-    const resultados = Array.isArray(evento.Resultados) ? evento.Resultados[0] : (evento.Resultados || evento.resultados || null);
-    const servicios = evento.serviciosContratados || evento.ServiciosContratados || [];
-    const presupuesto = evento.presupuesto || evento.Presupuesto || null;
-    const egresos = presupuesto?.egresos || evento.Egresos || evento.egresos || [];
-    const ingresos = presupuesto?.ingresos || evento.Ingresos || evento.ingresos || [];
+    const recursos = obtener('Recursos', 'recursos') || [];
+    const comite = obtener('comite', 'Comite') || [];
+    const tipos = obtener('tiposDeEvento', 'TiposDeEvento') || [];
+    const clasif = obtener('clasificacion', 'Clasificacion') || null;
+    const subcat = obtener('subcategoria') || null;
+    const resArr = obtener('Resultados', 'resultados');
+    const resultados = Array.isArray(resArr) ? resArr[0] : (resArr || null);
+    const servicios = obtener('serviciosContratados', 'ServiciosContratados') || [];
+    const presupuesto = obtener('presupuesto', 'Presupuesto') || null;
+    const egresos = presupuesto?.egresos || obtener('Egresos', 'egresos') || [];
+    const ingresos = presupuesto?.ingresos || obtener('Ingresos', 'ingresos') || [];
 
     // ===== ENCABEZADO =====
     doc.fontSize(24).fillColor('#E95A0C').text('UNIFRANZ', { align: 'center' });
@@ -438,9 +451,9 @@ async function generarPDFEvento(evento, usuario) {
       });
       doc.moveDown(0.5);
     };
-    secActividades('Actividades Previas', evento.actividadesPrevias);
-    secActividades('Actividades Durante el Evento', evento.actividadesDurante);
-    secActividades('Actividades Después del Evento', evento.actividadesPost);
+    secActividades('Actividades Previas', obtener('actividadesPrevias') || []);
+    secActividades('Actividades Durante el Evento', obtener('actividadesDurante') || []);
+    secActividades('Actividades Después del Evento', obtener('actividadesPost') || []);
 
     // ===== 8. SERVICIOS CONTRATADOS =====
     if (servicios.length) {
@@ -2515,7 +2528,14 @@ const enviarFichaCompletaTelegram = async (idevento, chatId) => {
           const idPres = pres.idpresupuesto || pres.id;
           if (models.Egreso) pres.dataValues.egresos = await models.Egreso.findAll({ where: { idpresupuesto: idPres } });
           if (models.Ingreso) pres.dataValues.ingresos = await models.Ingreso.findAll({ where: { idpresupuesto: idPres } });
-          evento.dataValues.presupuesto = pres;
+          evento.dataValues.presupuesto = {
+            idpresupuesto: idPres,
+            total_egresos: pres.total_egresos,
+            total_ingresos: pres.total_ingresos,
+            balance: pres.balance,
+            egresos: pres.dataValues.egresos || [],
+            ingresos: pres.dataValues.ingresos || []
+          };
         }
       }
     } catch (e) { evento.dataValues.presupuesto = null; }
