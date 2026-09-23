@@ -33,6 +33,7 @@
     "pg-hstore": "^2.3.4",
     "react-qr-code": "^2.2.0",
     "sequelize": "^6.37.7",
+    "sharp": "^0.35.4",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "uuid": "^11.1.0"

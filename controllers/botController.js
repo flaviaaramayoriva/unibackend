@@ -1,4 +1,5 @@
 const axios = require('axios');
+const sharp = require('sharp');
 const { getModels } = require('../models/index.js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { Op } = require('sequelize');
@@ -312,16 +313,67 @@ async function generarPDFEvento(evento, usuario) {
     return buscar(evento) ?? buscar(evento?.dataValues);
   };
 
-  // 🖼️ Pre-descargar imagen del layout (si existe) para incrustarla en el PDF
+  // 🖼️ Pre-descargar imagen del layout (si existe) e incrustarla en el PDF
   let layoutImageBuffer = null;
   const layoutData = obtener('Layout', 'layout') || null;
   if (layoutData && layoutData.url_imagen) {
     try {
       const base = process.env.API_BASE_URL || 'https://unibackend-production-a0f8.up.railway.app';
-      const resp = await axios.get(`${base}/uploads/${layoutData.url_imagen}`, { responseType: 'arraybuffer', timeout: 8000 });
-      layoutImageBuffer = Buffer.from(resp.data);
-    } catch (e) { layoutImageBuffer = null; }
+      const urlRaw = layoutData.url_imagen;
+      const urlFinal = /^https?:/i.test(urlRaw)
+        ? urlRaw
+        : `${base}/uploads/${urlRaw.replace(/^\/?uploads\//, '')}`;
+      const resp = await axios.get(urlFinal, { responseType: 'arraybuffer', timeout: 8000 });
+      let rawBuf = Buffer.from(resp.data);
+      // Convertir SVG → PNG (PDFKit no renderiza SVG)
+      if (String(urlRaw).toLowerCase().endsWith('.svg') || rawBuf.slice(1, 4).toString() === 'xml') {
+        rawBuf = await sharp(rawBuf).png().toBuffer();
+      }
+      layoutImageBuffer = rawBuf;
+      // Si el layout es SVG (PDFKit no lo renderiza), convertirlo a PNG ahora (en contexto async)
+      const esSVG = /\.svg$/i.test(String(urlRaw)) || layoutImageBuffer.slice(1, 4).toString() === 'xml';
+      if (esSVG) {
+        layoutImageBuffer = await sharp(layoutImageBuffer).png().toBuffer();
+      }
+    } catch (e) {
+      console.warn('⚠️ No se pudo descargar layout:', e.message);
+      layoutImageBuffer = null;
+    }
   }
+
+  // ⚙️ Colores institucionales UNIFRANZ
+  const NARANJA = '#F15A29';
+  const NARANJA_OSCURO = '#D2440F';
+  const AZUL = '#1c1c4b';
+  const AZUL_CLARO = '#2c3e80';
+  const GRIS = '#5c6b7a';
+  const FONDO_SEC = '#fff3ec';
+  const BORDE_CLARO = '#e8e8e8';
+
+  const celdaFila = (etiqueta, valor, y, alto, filaNaranja) => {
+    doc.rect(50, y, 260, alto).strokeColor('#e3e3e3').lineWidth(0.6).stroke();
+    doc.rect(310, y, 240, alto).strokeColor('#e3e3e3').lineWidth(0.6).stroke();
+    doc.fillColor(NARANJA).font('Helvetica-Bold').fontSize(8.5)
+      .text(etiqueta + ':', 56, y + 3, { width: 248, height: alto - 4, lineBreak: true });
+    doc.fillColor('#222222').font('Helvetica').fontSize(9)
+      .text(String(valor ?? '—'), 316, y + 3, { width: 228, height: alto - 4, lineBreak: true });
+    doc.y = y + alto;
+  };
+
+  const seccionTitulo = (texto, numero) => {
+    asegurarPagina(70);
+    doc.moveDown(0.7);
+    doc.save();
+    doc.roundedRect(50, doc.y, 4, 16, 2).fill(NARANJA);
+    doc.fillColor(AZUL).font('Helvetica-Bold').fontSize(12.5)
+      .text(`${numero ? numero + '. ' : ''}${texto}`, 60, doc.y);
+    doc.moveDown(0.4);
+    const yLinea = doc.y;
+    doc.strokeColor(NARANJA).lineWidth(1.4).moveTo(50, yLinea).lineTo(550, yLinea).stroke();
+    doc.moveDown(0.5);
+    doc.font('Helvetica').fontSize(10).fillColor('#222222');
+    doc.restore();
+  };
 
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50, size: 'A4' });
@@ -334,13 +386,9 @@ async function generarPDFEvento(evento, usuario) {
 
     // ===== HELPERS =====
     const asegurarPagina = (alto) => { if (doc.y > 780 - alto) doc.addPage(); };
+    const fechaLarga = (f) => f ? new Date(f).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }) : '—';
     const fechaCorta = (f) => f ? new Date(f).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }) : 'No especificada';
-    const tituloSeccion = (t) => {
-      asegurarPagina(90);
-      doc.font('Helvetica-Bold').fontSize(13).fillColor('#2980b9').text(t, { underline: true });
-      doc.moveDown(0.4);
-      doc.font('Helvetica').fontSize(10).fillColor('#000000');
-    };
+    const money = (n) => `Bs ${parseFloat(n || 0).toFixed(2)}`;
     const negrita = (t, opts) => { doc.font('Helvetica-Bold').text(t, opts); doc.font('Helvetica'); };
 
     // Normalizar datos (mayúsculas/minúsculas de aliases)
@@ -357,190 +405,293 @@ async function generarPDFEvento(evento, usuario) {
     const ingresos = presupuesto?.ingresos || obtener('Ingresos', 'ingresos') || [];
 
     // ===== ENCABEZADO =====
-    doc.fontSize(24).fillColor('#E95A0C').text('UNIFRANZ', { align: 'center' });
-    doc.fontSize(11).fillColor('#333333').text('Ficha Técnica del Evento', { align: 'center' });
+    doc.save();
+    doc.rect(0, 0, 595, 110).fill(AZUL);
+    doc.roundedRect(50, 26, 8, 58, 4).fill(NARANJA);
+    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(26).text('UNIFRANZ', 72, 32);
+    doc.fillColor('#ffd9c7').font('Helvetica').fontSize(12).text('Universidad Privada Franz Tamayo', 72, 62);
+    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(17).text('FICHA TÉCNICA DEL EVENTO', 72, 82);
+    doc.endPath();
+    doc.restore();
+    doc.moveDown(3.2);
+
+    // Nombre del evento en destacado
+    doc.fillColor(NARANJA_OSCURO).font('Helvetica-Bold').fontSize(16)
+      .text((evento.nombreevento || 'Evento sin nombre').toUpperCase(), { align: 'center' });
     doc.moveDown(0.5);
-    doc.strokeColor('#E95A0C').moveTo(50, doc.y).lineTo(550, doc.y).stroke();
-    doc.moveDown(1);
-    doc.fontSize(16).fillColor('#1e293b').text((evento.nombreevento || 'Sin nombre').toUpperCase(), { align: 'center' });
-    doc.moveDown(1);
+    doc.fillColor(GRIS).font('Helvetica').fontSize(10)
+      .text(`Evento N° ${evento.idevento || '—'}  ·  Generado el ${new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' })}`, { align: 'center' });
+    doc.moveDown(1.2);
 
     // ===== 1. DATOS GENERALES =====
-    tituloSeccion('Datos Generales');
-    doc.text(`Fecha: ${evento.fechaevento ? new Date(evento.fechaevento).toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' }) : 'No definida'}`);
-    doc.text(`Hora: ${(evento.horaevento || 'No definida').toString().substring(0, 5)}`);
-    doc.text(`Ubicación: ${evento.lugarevento || 'No definido'}`);
-    doc.text(`Estado: ${(evento.estado || 'N/A').toUpperCase()}`);
-    doc.text(`Responsable: ${evento.responsable_evento || 'No asignado'}`);
-    if (usuario) {
-      const org = [usuario.nombre, usuario.apellidopat, usuario.apellidomat].filter(Boolean).join(' ').trim();
-      if (org) doc.text(`Organizador: ${org}`);
-      if (usuario.academico?.facultad?.nombre_facultad) doc.text(`Facultad: ${usuario.academico.facultad.nombre_facultad}`);
-    }
-    doc.moveDown(0.8);
+    seccionTitulo('Datos Generales', 1);
+    const org = usuario ? [usuario.nombre, usuario.apellidopat, usuario.apellidomat].filter(Boolean).join(' ').trim() : '';
+    const facultad = usuario?.academico?.facultad?.nombre_facultad || '';
+    const filasDatos = [
+      ['Fecha', evento.fechaevento ? new Date(evento.fechaevento).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : 'No definida'],
+      ['Hora', (evento.horaevento || 'No definida').toString().substring(0, 5)],
+      ['Ubicación', evento.lugarevento || 'No definido'],
+      ['Estado', (evento.estado || 'N/A').toUpperCase()],
+      ['Responsable', evento.responsable_evento || 'No asignado'],
+    ];
+    if (org) filasDatos.push(['Organizador', org]);
+    if (facultad) filasDatos.push(['Facultad', facultad]);
+    filasDatos.forEach(([k, v], i) => {
+      asegurarPagina(30);
+      celdaFila(k, v, doc.y, 26, i % 2 === 0);
+      doc.moveDown(0.25);
+    });
 
-    // ===== 2. CLASIFICACIÓN ESTRATÉGICA =====
-    if (clasif || subcat) {
-      tituloSeccion('Clasificación Estratégica');
-      const txt = [
-        clasif?.nombreClasificacion || clasif?.nombreClasificacion || '',
-        subcat?.nombresubcategoria || subcat?.nombreSubcategoria || subcat?.nombre_subcategoria || ''
-      ].filter(Boolean).join(' - ');
-      doc.text(`• ${txt || 'Sin clasificación'}`);
-      doc.moveDown(0.8);
+    // Clasificación (chip)
+    const txtClasif = [
+      clasif?.nombreClasificacion,
+      subcat?.nombresubcategoria || subcat?.nombreSubcategoria || subcat?.nombre_subcategoria || ''
+    ].filter(Boolean);
+    if (txtClasif.length) {
+      doc.moveDown(0.3);
+      filasDatos.length = 0;
+      txtClasif.forEach(p => {
+        asegurarPagina(20);
+        doc.save();
+        const ancho = doc.widthOfString(p, { font: 'Helvetica', size: 9 }) + 24;
+        doc.roundedRect(50, doc.y, Math.min(ancho, 480), 18, 9).fill('#fde7db');
+        doc.fillColor(NARANJA_OSCURO).font('Helvetica-Bold').fontSize(9).text(p, 62, doc.y + 5, { width: 460, height: 12, lineBreak: false });
+        doc.y += 20;
+        doc.restore();
+      });
+      doc.moveDown(0.4);
     }
 
-    // ===== 3. TIPOS DE EVENTO =====
+    // ===== 2. TIPOS DE EVENTO =====
     if (tipos.length) {
-      tituloSeccion('Tipos de Evento');
-      tipos.forEach(t => doc.text(`• ${t.nombretipo || 'Tipo'}`));
-      doc.moveDown(0.8);
+      seccionTitulo('Tipos de Evento', 2);
+      tipos.forEach(t => {
+        asegurarPagina(20);
+        doc.fillColor('#333333').font('Helvetica').fontSize(10).text(`• ${t.nombretipo || 'Tipo'}`, { bulletIndent: 4 });
+        doc.moveDown(0.2);
+      });
+    }
+
+    // ===== 3. DESCRIPCIÓN =====
+    if (evento.descripcion) {
+      seccionTitulo('Descripción', 3);
+      doc.fillColor('#333333').font('Helvetica').fontSize(10)
+        .text(evento.descripcion, { lineGap: 2 });
+      doc.moveDown(0.4);
     }
 
     // ===== 4. RESULTADOS ESPERADOS =====
     if (resultados && (resultados.participacion_esperada || resultados.satisfaccion_esperada || resultados.otros_resultados)) {
-      tituloSeccion('Resultados Esperados');
-      if (resultados.participacion_esperada) doc.text(`Participación: ${resultados.participacion_esperada}`);
-      if (resultados.satisfaccion_esperada) doc.text(`Satisfacción: ${resultados.satisfaccion_esperada}`);
-      if (resultados.otros_resultados) doc.text(`Otros: ${resultados.otros_resultados}`);
-      doc.moveDown(0.8);
+      seccionTitulo('Resultados Esperados', 4);
+      [['Participación esperada', resultados.participacion_esperada],
+       ['Satisfacción esperada', resultados.satisfaccion_esperada],
+       ['Otros resultados', resultados.otros_resultados]
+      ].forEach(([k, v]) => {
+        if (!v) return;
+        asegurarPagina(30);
+        celdaFila(k, v, doc.y, 26);
+        doc.moveDown(0.25);
+      });
     }
 
     // ===== 5. RECURSOS SOLICITADOS (por categoría) =====
     if (recursos.length) {
-      tituloSeccion('Recursos Solicitados');
-      [['tecnologico', 'Tecnológicos'], ['mobiliario', 'Mobiliario'], ['vajilla', 'Vajilla']].forEach(([key, label]) => {
+      seccionTitulo('Recursos Solicitados', 5);
+      const categorias = [['tecnologico', 'Tecnológicos', '🖥️'], ['mobiliario', 'Mobiliario', '🪑'], ['vajilla', 'Vajilla', '🍽️']];
+      categorias.forEach(([key, label]) => {
         const items = recursos.filter(r => (r.recurso_tipo || '').toLowerCase() === key);
         if (!items.length) return;
-        doc.fillColor('#E95A0C'); negrita(label); doc.fillColor('#000000');
-        items.forEach(r => doc.text(`• ${r.cantidad || 1} x ${r.nombre_recurso}`));
-        doc.moveDown(0.3);
+        asegurarPagina(30);
+        doc.fillColor(NARANJA).font('Helvetica-Bold').fontSize(10).text(`${label}`);
+        doc.moveDown(0.25);
+        items.forEach(r => {
+          asegurarPagina(20);
+          doc.fillColor('#333333').font('Helvetica').fontSize(10)
+            .text(`• ${r.cantidad || 1} x ${r.nombre_recurso || '—'}`);
+          doc.moveDown(0.15);
+        });
       });
       const otros = recursos.filter(r => !['tecnologico', 'mobiliario', 'vajilla'].includes((r.recurso_tipo || '').toLowerCase()));
       if (otros.length) {
-        doc.fillColor('#E95A0C'); negrita('Otros'); doc.fillColor('#000000');
-        otros.forEach(r => doc.text(`• ${r.cantidad || 1} x ${r.nombre_recurso} (${r.recurso_tipo})`));
+        asegurarPagina(30);
+        doc.fillColor(NARANJA).font('Helvetica-Bold').fontSize(10).text('Otros');
+        doc.moveDown(0.25);
+        otros.forEach(r => {
+          asegurarPagina(20);
+          doc.fillColor('#333333').font('Helvetica').fontSize(10)
+            .text(`• ${r.cantidad || 1} x ${r.nombre_recurso || '—'}${r.recurso_tipo ? ` (${r.recurso_tipo})` : ''}`);
+          doc.moveDown(0.15);
+        });
       }
-      doc.moveDown(0.8);
     }
 
     // ===== 6. COMITÉ DEL EVENTO =====
     if (comite.length) {
-      tituloSeccion('Comité del Evento');
+      seccionTitulo('Comité del Evento', 6);
       comite.forEach(m => {
-        asegurarPagina(40);
+        asegurarPagina(60);
+        doc.save();
+        doc.roundedRect(50, doc.y, 500, 40, 5).fill(FONDO_SEC);
         const nombre = [m.nombre, m.apellidopat, m.apellidomat].filter(Boolean).join(' ');
-        negrita(nombre || 'Miembro');
-        doc.text(`Rol: ${m.role === 'academico' ? 'Académico' : (m.role || 'N/A')}`);
-        doc.text(`Email: ${m.email || 'N/A'}`);
-        doc.moveDown(0.4);
+        doc.fillColor(AZUL).font('Helvetica-Bold').fontSize(10)
+          .text(nombre || 'Miembro', 62, doc.y + 6, { width: 476 });
+        doc.fillColor(GRIS).font('Helvetica').fontSize(8.5)
+          .text(`Rol: ${m.role === 'academico' ? 'Académico' : (m.role || 'N/A')}   ·   Email: ${m.email || 'N/A'}`, 62, doc.y + 20, { width: 476 });
+        doc.y += 44;
+        doc.restore();
+        doc.moveDown(0.3);
       });
-      doc.moveDown(0.5);
     }
 
     // ===== 7. ACTIVIDADES (3 fases) =====
-    const secActividades = (titulo, lista) => {
+    const secActividades = (titulo, lista, icono) => {
       if (!lista || !lista.length) return;
-      tituloSeccion(titulo);
+      asegurarPagina(60);
+      seccionTitulo(titulo, 7);
       lista.forEach((a, i) => {
         asegurarPagina(60);
-        negrita(`${i + 1}. ${a.nombre || a.nombreActividad || 'Actividad'}`);
-        doc.text(`   Responsable: ${a.responsable || 'No especificado'}`);
-        doc.text(`   Inicio: ${fechaCorta(a.fecha_inicio || a.fechaInicio)} — Fin: ${fechaCorta(a.fecha_fin || a.fechaFin)}`);
-        doc.moveDown(0.4);
+        doc.save();
+        doc.roundedRect(50, doc.y, 500, 42, 4).fill(i % 2 === 0 ? '#fafafa' : '#ffffff');
+        doc.strokeColor('#e8e8e8').lineWidth(0.7).stroke();
+        doc.fillColor(AZUL).font('Helvetica-Bold').fontSize(9.5)
+          .text(`${icono} ${i + 1}. ${a.nombre || a.nombreActividad || 'Actividad'}`, 62, doc.y + 5, { width: 476 });
+        doc.fillColor(GRIS).font('Helvetica').fontSize(8.5)
+          .text(`Responsable: ${a.responsable || 'No especificado'}  ·  Inicio: ${fechaCorta(a.fecha_inicio || a.fechaInicio)}  ·  Fin: ${fechaCorta(a.fecha_fin || a.fechaFin)}`, 62, doc.y + 18, { width: 476 });
+        doc.y += 44;
+        doc.restore();
+        doc.moveDown(0.3);
       });
-      doc.moveDown(0.5);
     };
-    secActividades('Actividades Previas', obtener('actividadesPrevias') || []);
-    secActividades('Actividades Durante el Evento', obtener('actividadesDurante') || []);
-    secActividades('Actividades Después del Evento', obtener('actividadesPost') || []);
+    secActividades('Actividades Previas', obtener('actividadesPrevias') || [], '🗓');
+    secActividades('Actividades Durante el Evento', obtener('actividadesDurante') || [], '▶');
+    secActividades('Actividades Después del Evento', obtener('actividadesPost') || [], '✔');
 
     // ===== 8. SERVICIOS CONTRATADOS =====
     if (servicios.length) {
-      tituloSeccion('Servicios Contratados');
+      seccionTitulo('Servicios Contratados', 8);
       servicios.forEach((s, i) => {
         asegurarPagina(60);
-        negrita(`${i + 1}. ${s.nombreServicio || s.nombreservicio || s.nombre || 'Servicio'}`);
-        const caracteristicas = s.caracteristica || s.caracteristicas;
-        if (caracteristicas) doc.text(`   Características: ${caracteristicas}`);
+        doc.save();
+        doc.roundedRect(50, doc.y, 500, 46, 4).fill(i % 2 === 0 ? '#fafafa' : '#ffffff');
+        doc.strokeColor('#e8e8e8').lineWidth(0.7).stroke();
+        const nombreServ = s.nombreServicio || s.nombreservicio || s.nombre || 'Servicio';
+        doc.fillColor(AZUL).font('Helvetica-Bold').fontSize(9.5)
+          .text(`🔧 ${i + 1}. ${nombreServ}`, 62, doc.y + 5, { width: 476 });
+        const detalles = [];
+        const car = s.caracteristica || s.caracteristicas;
         const fechaServ = s.fechaInicio || s.fecha_inicio || s.fechadeentrega;
-        doc.text(`   Fecha Entrega: ${fechaCorta(fechaServ)}`);
         const obsServ = s.observaciones || s.observacion;
-        if (obsServ) doc.text(`   Obs: ${obsServ}`);
-        doc.moveDown(0.4);
+        if (car) detalles.push(`Características: ${car}`);
+        if (fechaServ) detalles.push(`Entrega: ${fechaCorta(fechaServ)}`);
+        if (obsServ) detalles.push(`Obs: ${obsServ}`);
+        doc.fillColor(GRIS).font('Helvetica').fontSize(8.5)
+          .text(detalles.join('  ·  ') || 'Sin detalles', 62, doc.y + 18, { width: 476 });
+        doc.y += 48;
+        doc.restore();
+        doc.moveDown(0.3);
       });
-      doc.moveDown(0.5);
     }
 
     // ===== 9. LAYOUT DEL EVENTO (con imagen) =====
     if (layoutData) {
-      tituloSeccion('Layout del Evento');
-      if (layoutData.nombre) doc.text(`Nombre: ${layoutData.nombre}`);
+      seccionTitulo('Layout del Evento', 9);
+      if (layoutData.nombre) {
+        doc.fillColor(NARANJA).font('Helvetica-Bold').fontSize(10).text(`Nombre: ${layoutData.nombre}`);
+        doc.moveDown(0.5);
+      }
       if (layoutImageBuffer) {
         try {
-          asegurarPagina(250);
-          doc.image(layoutImageBuffer, 100, doc.y, { width: 400 });
-          doc.moveDown(1);
-        } catch (e) { /* sin imagen */ }
+          const img = doc.image(layoutImageBuffer, 75, doc.y, { fit: [450, 300], align: 'center' });
+          doc.moveDown(0.6);
+        } catch (e) {
+          console.warn('⚠️ No se pudo incrustar layout:', e.message);
+        }
+      } else {
+        doc.fillColor(GRIS).font('Helvetica').fontSize(9).text('(Sin imagen de layout disponible)');
       }
-      doc.moveDown(0.8);
     }
 
     // ===== 10. PRESUPUESTO (tablas) =====
-    const tablaFilas = (filas) => {
-      asegurarPagina(60);
+    const tablaFilas = (filas, color) => {
+      const colX = { d: 50, c: 300, p: 360, t: 450 };
+      asegurarPagina(70);
       let y = doc.y;
-      doc.fontSize(9).fillColor('#666666');
-      doc.text('Descripción', 50, y, { width: 220, lineBreak: false });
-      doc.text('Cant.', 280, y, { width: 50, align: 'right', lineBreak: false });
-      doc.text('Precio', 340, y, { width: 80, align: 'right', lineBreak: false });
-      doc.text('Total', 430, y, { width: 90, align: 'right', lineBreak: false });
-      doc.y = y + 14;
-      doc.strokeColor('#cccccc').moveTo(50, doc.y).lineTo(550, doc.y).stroke();
-      doc.moveDown(0.3);
-      filas.forEach(f => {
+      doc.fontSize(8.5).fillColor('#ffffff');
+      doc.rect(50, y, 500, 16).fill(color);
+      doc.text('Descripción', colX.d + 6, y + 4, { width: 240, lineBreak: false });
+      doc.text('Cant.', colX.c, y + 4, { width: 55, align: 'center', lineBreak: false });
+      doc.text('Precio Unit.', colX.p, y + 4, { width: 85, align: 'right', lineBreak: false });
+      doc.text('Total', colX.t, y + 4, { width: 80, align: 'right', lineBreak: false });
+      doc.y = y + 16;
+      doc.moveDown(0.2);
+      filas.forEach((f, i) => {
         asegurarPagina(20);
         const yy = doc.y;
-        doc.fontSize(9).fillColor('#000000');
-        doc.text(f.descripcion || '—', 50, yy, { width: 220, lineBreak: false });
-        doc.text(String(f.cantidad || 1), 280, yy, { width: 50, align: 'right', lineBreak: false });
-        doc.text(`Bs ${parseFloat(f.precio_unitario || 0).toFixed(2)}`, 340, yy, { width: 80, align: 'right', lineBreak: false });
-        doc.text(`Bs ${parseFloat(f.total || 0).toFixed(2)}`, 430, yy, { width: 90, align: 'right', lineBreak: false });
-        doc.y = yy + 14;
+        doc.fillColor(i % 2 === 0 ? '#f7f7f7' : '#ffffff');
+        doc.rect(50, yy, 500, 16).fill();
+        doc.fillColor('#333333').font('Helvetica').fontSize(8.5);
+        doc.text(f.descripcion || '—', colX.d + 6, yy + 4, { width: 240, lineBreak: false });
+        doc.text(String(f.cantidad || 1), colX.c, yy + 4, { width: 55, align: 'center', lineBreak: false });
+        doc.text(money(f.precio_unitario), colX.p, yy + 4, { width: 85, align: 'right', lineBreak: false });
+        doc.text(money(f.total), colX.t, yy + 4, { width: 80, align: 'right', lineBreak: false });
+        doc.y = yy + 16;
       });
-      doc.fontSize(10);
-      doc.moveDown(0.4);
+      doc.moveDown(0.3);
     };
 
     if (presupuesto || egresos.length || ingresos.length) {
-      tituloSeccion('Presupuesto del Evento');
+      seccionTitulo('Presupuesto del Evento', 10);
       if (egresos.length) {
-        doc.fillColor('#e74c3c'); negrita('↓ Egresos'); doc.fillColor('#000000');
-        tablaFilas(egresos);
-        negrita(`TOTAL EGRESOS: Bs ${(presupuesto?.total_egresos || egresos.reduce((s, e) => s + parseFloat(e.total || 0), 0)).toFixed(2)}`);
-        doc.moveDown(0.4);
+        negrita('↓ Egresos');
+        doc.moveDown(0.25);
+        tablaFilas(egresos, '#c0392b');
+        doc.fillColor('#c0392b').font('Helvetica-Bold').fontSize(9.5)
+          .text(`TOTAL EGRESOS: ${money(presupuesto?.total_egresos || egresos.reduce((s, e) => s + parseFloat(e.total || 0), 0))}`);
+        doc.moveDown(0.5);
       }
       if (ingresos.length) {
-        doc.fillColor('#27ae60'); negrita('↑ Ingresos'); doc.fillColor('#000000');
-        tablaFilas(ingresos);
-        negrita(`TOTAL INGRESOS: Bs ${(presupuesto?.total_ingresos || ingresos.reduce((s, i) => s + parseFloat(i.total || 0), 0)).toFixed(2)}`);
-        doc.moveDown(0.4);
+        negrita('↑ Ingresos');
+        doc.moveDown(0.25);
+        tablaFilas(ingresos, '#1e8449');
+        doc.fillColor('#1e8449').font('Helvetica-Bold').fontSize(9.5)
+          .text(`TOTAL INGRESOS: ${money(presupuesto?.total_ingresos || ingresos.reduce((s, i) => s + parseFloat(i.total || 0), 0))}`);
+        doc.moveDown(0.5);
       }
       const balance = presupuesto?.balance ?? 0;
-      doc.fillColor(balance >= 0 ? '#27ae60' : '#e74c3c');
-      negrita(`BALANCE ECONÓMICO: Bs ${balance.toFixed(2)}`);
-      doc.fillColor('#000000');
-      doc.moveDown(1);
+      asegurarPagina(40);
+      doc.save();
+      doc.roundedRect(50, doc.y, 500, 28, 5).fill(balance >= 0 ? '#eafaf1' : '#fdedec');
+      doc.fillColor(balance >= 0 ? '#1e8449' : '#c0392b').font('Helvetica-Bold').fontSize(11)
+        .text(`BALANCE ECONÓMICO: ${money(balance)}`, 62, doc.y + 9, { width: 476 });
+      doc.y += 30;
+      doc.restore();
     }
 
     // ===== 11. FIRMAS OFICIALES =====
-   
-    // ===== PIE DE PÁGINA =====
+    doc.moveDown(1.5);
+    asegurarPagina(120);
+    doc.moveDown(1);
+    doc.strokeColor('#999999').lineWidth(0.8);
+    doc.moveTo(80, doc.y).lineTo(270, doc.y).stroke();
+    doc.moveTo(330, doc.y).lineTo(520, doc.y).stroke();
+    doc.moveDown(0.2);
+    doc.fillColor(GRIS).font('Helvetica').fontSize(8.5);
+    doc.text('Firma del Organizador', 80, doc.y, { width: 200, align: 'center' });
+    doc.text('Firma de Autorización', 330, doc.y, { width: 200, align: 'center' });
+
+    // ===== PIE DE PÁGINA con numeración =====
     const pages = doc.bufferedPageCount;
     for (let i = 0; i < pages; i++) {
       doc.switchToPage(i);
-      doc.fontSize(8).fillColor('#999999')
-        .text(`Documento generado el ${new Date().toLocaleString('es-ES')} - FLA6346`, 50, 780, { align: 'center', width: 500 });
+      doc.fontSize(8).khulu();
+    }
+    for (let i = 0; i < pages; i++) {
+      doc.switchToPage(i);
+      doc.save();
+      doc.strokeColor('#dddddd').lineWidth(0.6).moveTo(50, 795).lineTo(545, 795).stroke();
+      doc.fillColor('#999999').font('Helvetica').fontSize(8)
+        .text(`Documento generado el ${new Date().toLocaleString('es-ES')} · Página ${i + 1} de ${pages} · UNIFRANZ`, 50, 798, { align: 'center', width: 495 });
+      doc.restore();
     }
 
     doc.end();
