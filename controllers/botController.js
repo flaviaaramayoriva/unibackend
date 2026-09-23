@@ -447,10 +447,13 @@ async function generarPDFEvento(evento, usuario) {
       tituloSeccion('Servicios Contratados');
       servicios.forEach((s, i) => {
         asegurarPagina(60);
-        negrita(`${i + 1}. ${s.nombreServicio || s.nombre || 'Servicio'}`);
-        if (s.caracteristica) doc.text(`   Características: ${s.caracteristica}`);
-        doc.text(`   Fecha Entrega: ${fechaCorta(s.fechaInicio || s.fecha_inicio)}`);
-        if (s.observaciones) doc.text(`   Obs: ${s.observaciones}`);
+        negrita(`${i + 1}. ${s.nombreServicio || s.nombreservicio || s.nombre || 'Servicio'}`);
+        const caracteristicas = s.caracteristica || s.caracteristicas;
+        if (caracteristicas) doc.text(`   Características: ${caracteristicas}`);
+        const fechaServ = s.fechaInicio || s.fecha_inicio || s.fechadeentrega;
+        doc.text(`   Fecha Entrega: ${fechaCorta(fechaServ)}`);
+        const obsServ = s.observaciones || s.observacion;
+        if (obsServ) doc.text(`   Obs: ${obsServ}`);
         doc.moveDown(0.4);
       });
       doc.moveDown(0.5);
@@ -2431,55 +2434,267 @@ const enviarFichaCompletaTelegram = async (idevento, chatId) => {
     if (!evento) return { ok: false, mensaje: 'Evento no encontrado' };
 
     const creador = evento.academicoCreador;
-    if (!creador || !creador.telegram_chat_id) {
+    if (!creador || (!creador.telegram_chat_id && !chatId)) {
       return { ok: false, mensaje: 'El creador no tiene Telegram vinculado' };
     }
 
     const chatObjetivo = chatId || creador.telegram_chat_id;
+
+    // 2. Enriquecer el evento con todos los datos (mismo patrón que /ficha_pdf)
+    evento.dataValues.recursos = evento.dataValues.Recursos || evento.dataValues.recursos || [];
+    evento.dataValues.comite = evento.dataValues.comite || evento.dataValues.Comite || [];
+
+    try {
+      if (evento.idclasificacion) {
+        const clasif = await models.sequelize.query(
+          `SELECT idclasificacion, "nombre_clasificacion" AS "nombreClasificacion" FROM clasificacion_estrategica WHERE idclasificacion = ?`,
+          { replacements: [evento.idclasificacion], type: models.sequelize.QueryTypes.SELECT }
+        );
+        evento.dataValues.clasificacion = clasif[0] || null;
+      }
+    } catch (e) { evento.dataValues.clasificacion = null; }
+
+    try {
+      if (evento.idsubcategoria) {
+        const subcat = await models.sequelize.query(
+          `SELECT idsubcategoria, "nombre_subcategoria" AS "nombresubcategoria" FROM subcategoria WHERE idsubcategoria = ?`,
+          { replacements: [evento.idsubcategoria], type: models.sequelize.QueryTypes.SELECT }
+        );
+        evento.dataValues.subcategoria = subcat[0] || null;
+      }
+    } catch (e) { evento.dataValues.subcategoria = null; }
+
+    try {
+      const tipos = await models.sequelize.query(
+        `SELECT t.idtipoevento, t.nombretipo 
+         FROM evento_tipos et 
+         JOIN tipos_de_evento t ON et.idtipoevento = t.idtipoevento 
+         WHERE et.idevento = ?`,
+        { replacements: [idevento], type: models.sequelize.QueryTypes.SELECT }
+      );
+      evento.dataValues.tiposDeEvento = tipos || [];
+    } catch (e) { evento.dataValues.tiposDeEvento = []; }
+
+    try {
+      const resultados = await models.sequelize.query(
+        `SELECT * FROM resultado WHERE idevento = ? LIMIT 1`,
+        { replacements: [idevento], type: models.sequelize.QueryTypes.SELECT }
+      );
+      evento.dataValues.Resultados = resultados || [];
+    } catch (e) { evento.dataValues.Resultados = []; }
+
+    try {
+      if (models.Actividad) {
+        const acts = await models.Actividad.findAll({ where: { idevento: idevento } });
+        const tipo = (a) => String(a.tipo || a.tipoactividad || a.fase || '').toLowerCase();
+        evento.dataValues.actividadesPrevias = acts.filter(a => tipo(a).includes('prev'));
+        evento.dataValues.actividadesDurante = acts.filter(a => tipo(a).includes('dur'));
+        evento.dataValues.actividadesPost = acts.filter(a => tipo(a).includes('post') || tipo(a).includes('desp'));
+        if (!evento.dataValues.actividadesPrevias.length && !evento.dataValues.actividadesDurante.length && !evento.dataValues.actividadesPost.length) {
+          evento.dataValues.actividadesPrevias = acts;
+        }
+      }
+    } catch (e) { evento.dataValues.actividadesPrevias = []; }
+
+    try {
+      if (models.Servicio) {
+        evento.dataValues.serviciosContratados = await models.Servicio.findAll({ where: { idevento: idevento } });
+      }
+    } catch (e) { evento.dataValues.serviciosContratados = []; }
+
+    try {
+      if (evento.idlayout && models.Layout) {
+        evento.dataValues.Layout = await models.Layout.findByPk(evento.idlayout);
+      }
+    } catch (e) { evento.dataValues.Layout = null; }
+
+    try {
+      if (models.Presupuesto) {
+        const pres = await models.Presupuesto.findOne({ where: { idevento: idevento } });
+        if (pres) {
+          const idPres = pres.idpresupuesto || pres.id;
+          if (models.Egreso) pres.dataValues.egresos = await models.Egreso.findAll({ where: { idpresupuesto: idPres } });
+          if (models.Ingreso) pres.dataValues.ingresos = await models.Ingreso.findAll({ where: { idpresupuesto: idPres } });
+          evento.dataValues.presupuesto = pres;
+        }
+      }
+    } catch (e) { evento.dataValues.presupuesto = null; }
+
+    try {
+      if (models.Comite) {
+        const c = await models.Comite.findAll({
+          where: { idevento: idevento },
+          attributes: ['idusuario'],
+          include: [{ model: User, as: 'miembroComite', attributes: ['idusuario', 'nombre', 'apellidopat', 'apellidomat', 'email', 'role'] }]
+        });
+        evento.dataValues.comite = (c || []).map(m => m.miembroComite || m).filter(Boolean);
+      }
+    } catch (e) { /* comite ya cargado por asociación */ }
+
+    try {
+      if (models.EventoRecurso) {
+        const er = await models.EventoRecurso.findAll({
+          where: { idevento: idevento },
+          include: [{ model: models.Recurso, as: 'recurso', attributes: ['idrecurso', 'nombre_recurso', 'recurso_tipo', 'descripcion'] }]
+        });
+        evento.dataValues.recursos = (er || []).map(x => ({
+          idrecurso: x.recurso?.idrecurso,
+          nombre_recurso: x.recurso?.nombre_recurso,
+          recurso_tipo: x.recurso?.recurso_tipo,
+          descripcion: x.recurso?.descripcion,
+          cantidad: x.cantidad || 1
+        })).filter(x => x.nombre_recurso);
+      }
+    } catch (e) { /* recursos ya cargado */ }
+
+    try {
+      const pdiRows = await models.sequelize.query(
+        `SELECT "descripcion" FROM evento_pdi WHERE idevento = :idevento ORDER BY idevento_pdi ASC`,
+        { replacements: { idevento }, type: models.sequelize.QueryTypes.SELECT }
+      );
+      evento.dataValues.ObjetivosPDI = (pdiRows || []).map(r => r.descripcion);
+    } catch (e) { evento.dataValues.ObjetivosPDI = []; }
+
+    // 3. Construir mensaje HTML enriquecido con TODAS las secciones
     const fechaEvento = new Date(evento.fechaevento).toLocaleDateString('es-ES', {
       year: 'numeric', month: 'long', day: 'numeric'
     });
+    const horaEv = (evento.horaevento || '').toString().substring(0, 5) || 'No definida';
+    const facultad = creador?.academico?.facultad?.nombre_facultad || 'Sin facultad';
+    const org = [creador?.nombre, creador?.apellidopat, creador?.apellidomat].filter(Boolean).join(' ').trim() || 'No especificado';
+    const estado = (evento.estado || 'N/A').toUpperCase();
 
-    // 2. Construir mensaje enriquecido con TODOS los datos
-    const facultad = creador.academico?.facultad?.nombre_facultad || 'Sin facultad';
-    
-    let mensaje = `🎉 <b>¡EVENTO APROBADO!</b>\n\n`;
-    mensaje += `📅 <b>${evento.nombreevento}</b>\n\n`;
-    mensaje += `━━━━━━━━━━━━━━━━━━━━\n`;
-    mensaje += `📋 <b>DATOS GENERALES</b>\n`;
-    mensaje += `🗓️ Fecha: ${fechaEvento}\n`;
-    mensaje += `🕐 Hora: ${evento.horaevento || 'No definida'}\n`;
-    mensaje += `📍 Lugar: ${evento.lugarevento || 'No definido'}\n`;
-    mensaje += `🏫 Facultad: ${facultad}\n`;
-    mensaje += `👤 Responsable: ${evento.responsable_evento || 'No asignado'}\n\n`;
+    const secciones = [];
 
-    // Descripción (si existe)
-    if (evento.descripcion) {
-      mensaje += `━━━━━━━━━━━━━━━━━━━━\n`;
-      mensaje += `📝 <b>DESCRIPCIÓN</b>\n`;
-      mensaje += `${evento.descripcion.substring(0, 200)}${evento.descripcion.length > 200 ? '...' : ''}\n\n`;
+    secciones.push(`🎉 <b>FICHA TÉCNICA DEL EVENTO</b>\n📅 <b>${evento.nombreevento}</b>\n🆔 ID: ${evento.idevento}`);
+
+    secciones.push(
+      `━━━━━━━━━━━━━━━━━━━━\n📋 <b>DATOS GENERALES</b>\n` +
+      `🗓️ Fecha: ${fechaEvento}\n` +
+      `🕐 Hora: ${horaEv}\n` +
+      `📍 Lugar: ${evento.lugarevento || 'No definido'}\n` +
+      `🏫 Facultad: ${facultad}\n` +
+      `👤 Responsable: ${evento.responsable_evento || 'No asignado'}\n` +
+      `🧑‍💼 Organizador: ${org}\n` +
+      `📌 Estado: <b>${estado}</b>`
+    );
+
+    const clasif = evento.dataValues.clasificacion;
+    const subcat = evento.dataValues.subcategoria;
+    const txtClasif = [clasif?.nombreClasificacion, subcat?.nombresubcategoria].filter(Boolean).join(' - ');
+    if (txtClasif) {
+      secciones.push(`━━━━━━━━━━━━━━━━━━━━\n🏷️ <b>CLASIFICACIÓN ESTRATÉGICA</b>\n${txtClasif}`);
     }
 
-    // Información de actividades (si tiene)
-    mensaje += `━━━━━━━━━━━━━━━━━━━━\n`;
-    mensaje += `📊 <b>ESTADÍSTICAS</b>\n`;
-    mensaje += `✅ Estado: <b>APROBADO</b>\n`;
-    mensaje += `📄 Se adjunta ficha técnica completa en PDF con:\n`;
-    mensaje += `   • Actividades detalladas\n`;
-    mensaje += `   • Presupuesto completo\n`;
-    mensaje += `   • Comité del evento\n`;
-    mensaje += `   • Recursos solicitados\n`;
-    mensaje += `   • Servicios contratados\n\n`;
-    mensaje += `¡Éxito en tu evento! 🎊`;
+    if (evento.descripcion) {
+      secciones.push(`━━━━━━━━━━━━━━━━━━━━\n📝 <b>DESCRIPCIÓN</b>\n${evento.descripcion.substring(0, 300)}${evento.descripcion.length > 300 ? '...' : ''}`);
+    }
 
-    // 3. Enviar el mensaje de texto con toda la info
-    await axios.post(`${TELEGRAM_API}/sendMessage`, {
-      chat_id: chatObjetivo,
-      text: mensaje,
-      parse_mode: 'HTML'
-    });
+    if ((evento.dataValues.tiposDeEvento || []).length) {
+      const listaTipos = evento.dataValues.tiposDeEvento.map(t => `• ${t.nombretipo}`).join('\n');
+      secciones.push(`━━━━━━━━━━━━━━━━━━━━\n🎯 <b>TIPOS DE EVENTO</b>\n${listaTipos}`);
+    }
 
-    // 4. Generar y enviar el PDF adjunto
+    if ((evento.dataValues.ObjetivosPDI || []).length) {
+      const listaPdi = evento.dataValues.ObjetivosPDI.map((p, i) => `${i + 1}. ${p}`).join('\n');
+      secciones.push(`━━━━━━━━━━━━━━━━━━━━\n🎓 <b>OBJETIVOS DEL PDI</b>\n${listaPdi}`);
+    }
+
+    const resultados = evento.dataValues.Resultados?.[0];
+    if (resultados && (resultados.participacion_esperada || resultados.satisfaccion_esperada || resultados.otros_resultados)) {
+      let txtR = '';
+      if (resultados.participacion_esperada) txtR += `👥 Participación esperada: ${resultados.participacion_esperada}\n`;
+      if (resultados.satisfaccion_esperada) txtR += `😊 Satisfacción esperada: ${resultados.satisfaccion_esperada}\n`;
+      if (resultados.otros_resultados) txtR += `📈 Otros: ${resultados.otros_resultados}\n`;
+      if (txtR) secciones.push(`━━━━━━━━━━━━━━━━━━━━\n🎯 <b>RESULTADOS ESPERADOS</b>\n${txtR.trimEnd()}`);
+    }
+
+    if ((evento.dataValues.comite || []).length) {
+      const listaComite = evento.dataValues.comite.slice(0, 8).map(m => {
+        const n = [m.nombre, m.apellidopat, m.apellidomat].filter(Boolean).join(' ').trim();
+        return `• ${n || 'Miembro'} (${m.role === 'academico' ? 'Académico' : (m.role || 'N/A')})`;
+      }).join('\n');
+      secciones.push(`━━━━━━━━━━━━━━━━━━━━\n👥 <b>COMITÉ DEL EVENTO</b>\n${listaComite}${evento.dataValues.comite.length > 8 ? `\n• y ${evento.dataValues.comite.length - 8} más...` : ''}`);
+    }
+
+    if ((evento.dataValues.recursos || []).length) {
+      const listaRec = evento.dataValues.recursos.slice(0, 12).map(r => `• ${r.cantidad || 1} x ${r.nombre_recurso}${r.recurso_tipo ? ` (${r.recurso_tipo})` : ''}`).join('\n');
+      secciones.push(`━━━━━━━━━━━━━━━━━━━━\n📦 <b>RECURSOS SOLICITADOS</b>\n${listaRec}${evento.dataValues.recursos.length > 12 ? `\n• y ${evento.dataValues.recursos.length - 12} más...` : ''}`);
+    }
+
+    const secAct = (titulo, lista, icono) => {
+      if (!lista || !lista.length) return '';
+      const items = lista.slice(0, 5).map((a, i) => {
+        const ini = a.fecha_inicio || a.fechaInicio;
+        const fin = a.fecha_fin || a.fechaFin;
+        const fechas = ini || fin ? `  📆 ${ini ? new Date(ini).toLocaleDateString('es-ES') : '?'}${fin ? ' → ' + new Date(fin).toLocaleDateString('es-ES') : ''}` : '';
+        return `${i + 1}. ${a.nombre || a.nombreActividad || 'Actividad'}\n   👤 ${a.responsable || 'No especificado'}${fechas}`;
+      }).join('\n');
+      return `${icono} <b>${titulo}</b>\n${items}${lista.length > 5 ? `\n… y ${lista.length - 5} más` : ''}`;
+    };
+    const actPrevias = secAct('ACTIVIDADES PREVIAS', evento.dataValues.actividadesPrevias, '🗓️');
+    const actDurante = secAct('ACTIVIDADES DURANTE', evento.dataValues.actividadesDurante, '▶️');
+    const actPost = secAct('ACTIVIDADES POST', evento.dataValues.actividadesPost, '✔️');
+    if (actPrevias || actDurante || actPost) {
+      secciones.push(`━━━━━━━━━━━━━━━━━━━━\n📊 <b>ACTIVIDADES</b>\n${[actPrevias, actDurante, actPost].filter(Boolean).join('\n\n')}`);
+    }
+
+    if ((evento.dataValues.serviciosContratados || []).length) {
+      const listServ = evento.dataValues.serviciosContratados.slice(0, 6).map((s, i) => {
+        return `${i + 1}. ${s.nombreservicio || s.nombreServicio || s.nombre || 'Servicio'}${s.fechadeentrega || s.fechaInicio ? ` — 📆 ${new Date(s.fechadeentrega || s.fechaInicio).toLocaleDateString('es-ES')}` : ''}`;
+      }).join('\n');
+      secciones.push(`━━━━━━━━━━━━━━━━━━━━\n🔧 <b>SERVICIOS CONTRATADOS</b>\n${listServ}${evento.dataValues.serviciosContratados.length > 6 ? `\n… y ${evento.dataValues.serviciosContratados.length - 6} más` : ''}`);
+    }
+
+    const pres = evento.dataValues.presupuesto;
+    const egresos = pres?.egresos || [];
+    const ingresos = pres?.ingresos || [];
+    if (pres) {
+      let txtPres = '';
+      if (egresos.length) {
+        txtPres += `🔴 <b>EGRESOS</b>\n`;
+        txtPres += egresos.slice(0, 8).map(e => `• ${e.descripcion}: ${e.cantidad || 1} x Bs ${Number(e.precio_unitario).toFixed(2)} = <b>Bs ${Number(e.total).toFixed(2)}</b>`).join('\n');
+        txtPres += `\n   <b>Subtotal Egresos: Bs ${Number(pres.total_egresos || 0).toFixed(2)}</b>\n`;
+      }
+      if (ingresos.length) {
+        txtPres += `🟢 <b>INGRESOS</b>\n`;
+        txtPres += ingresos.slice(0, 8).map(i => `• ${i.descripcion}: ${i.cantidad || 1} x Bs ${Number(i.precio_unitario).toFixed(2)} = <b>Bs ${Number(i.total).toFixed(2)}</b>`).join('\n');
+        txtPres += `\n   <b>Subtotal Ingresos: Bs ${Number(pres.total_ingresos || 0).toFixed(2)}</b>\n`;
+      }
+      const bal = Number(pres.balance || 0);
+      txtPres += `━━━━━\n💰 <b>BALANCE ECONÓMICO: Bs ${bal.toFixed(2)}</b>`;
+      secciones.push(`━━━━━━━━━━━━━━━━━━━━\n💵 <b>PRESUPUESTO</b>\n${txtPres}`);
+    }
+
+    if (evento.dataValues.Layout) {
+      secciones.push(`━━━━━━━━━━━━━━━━━━━━\n🧩 <b>LAYOUT DEL EVENTO</b>\n${evento.dataValues.Layout.nombre || `Layout ID: ${evento.dataValues.Layout.idlayout || ''}`}`);
+    }
+
+    secciones.push(`━━━━━━━━━━━━━━━━━━━━\n📄 Se adjunta la <b>Ficha Técnica completa en PDF</b> (mayor detalle).\n¡Éxito en tu evento! 🎊`);
+
+    const mensajeCompleto = secciones.join('\n\n');
+
+    // 4. Enviar en chunks (máx 4096 chars por mensaje en Telegram)
+    const chunks = [];
+    let buffer = '';
+    for (const line of mensajeCompleto.split('\n')) {
+      if ((buffer + line).length > 4000 && buffer) {
+        chunks.push(buffer);
+        buffer = '';
+      }
+      buffer += (buffer ? '\n' : '') + line;
+    }
+    if (buffer) chunks.push(buffer);
+
+    for (const chunk of chunks) {
+      await axios.post(`${TELEGRAM_API}/sendMessage`, {
+        chat_id: chatObjetivo,
+        text: chunk,
+        parse_mode: 'HTML'
+      });
+    }
+
+    // 5. Generar y enviar el PDF adjunto
     try {
       const pdfBuffer = await generarPDFEvento(evento, creador);
       const form = new FormData();
