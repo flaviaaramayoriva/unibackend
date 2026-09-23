@@ -1,7 +1,7 @@
 // routes/botRoutes.js
 const express = require('express');
 const router = express.Router();
-const {getMessages,telegramWebhook, whatsappWebhook,botStatus,appChat,getChatHistory} 
+const {getMessages,telegramWebhook, whatsappWebhook,botStatus,appChat,getChatHistory,getMisEventosParaSelector} 
 = require('../controllers/botController');
 console.log('🔍 [DEBUG] appChat type:', typeof appChat); // Debería decir 'function'
 console.log('🔍 [DEBUG] telegramWebhook type:', typeof telegramWebhook);
@@ -16,5 +16,6 @@ router.post('/whatsapp/webhook', whatsappWebhook);
 router.get('/status', botStatus);
 router.post('/chat', appChat);
 router.get('/history/:email', getChatHistory);
+router.get('/mis-eventos/:sender', getMisEventosParaSelector);
 
 module.exports = router;

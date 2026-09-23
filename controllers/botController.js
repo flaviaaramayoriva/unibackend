@@ -2274,6 +2274,52 @@ const getChatHistory = async (req, res) => {
   }
 };
 
+// Devuelve los eventos del usuario (para que el asistente pueda escoger cuál enviar a Telegram)
+const getMisEventosParaSelector = async (req, res) => {
+  try {
+    const models = getModels();
+    const { Evento, User } = models;
+    const { sender } = req.params;
+
+    if (!sender || sender === 'invitado' || sender === 'anonymous' || !Evento) {
+      return res.json({ eventos: [] });
+    }
+
+    let usuario = null;
+    if (sender.includes('@')) {
+      usuario = await User.findOne({ where: { email: sender.toLowerCase() } });
+    } else {
+      const senderId = parseInt(sender, 10);
+      if (!isNaN(senderId)) {
+        usuario = await User.findOne({ where: { idusuario: senderId } });
+      }
+    }
+
+    if (!usuario) return res.json({ eventos: [] });
+
+    const eventos = await Evento.findAll({
+      where: { idacademico: usuario.idusuario },
+      attributes: ['idevento', 'nombreevento', 'fechaevento', 'horaevento', 'lugarevento', 'estado'],
+      order: [['created_at', 'DESC']],
+      limit: 30
+    });
+
+    res.json({
+      eventos: eventos.map(e => ({
+        idevento: e.idevento,
+        nombreevento: e.nombreevento,
+        fechaevento: e.fechaevento,
+        horaevento: e.horaevento,
+        lugarevento: e.lugarevento,
+        estado: e.estado,
+      }))
+    });
+  } catch (error) {
+    console.error('❌ getMisEventosParaSelector error:', error);
+    res.status(500).json({ error: 'Error al cargar tus eventos' });
+  }
+};
+
 
 const enviarNotificacionTelegram = async (evento, tipo) => {
   console.log(`🔔 [TELEGRAM] Intentando enviar notificación: ${tipo} para evento ID: ${evento.idevento || evento.id}`);
@@ -2489,5 +2535,6 @@ module.exports = {
   enviarNotificacionTelegram,
   appChat,
   getChatHistory,
+  getMisEventosParaSelector,
   enviarNotificacionCompletaTelegram
 };
