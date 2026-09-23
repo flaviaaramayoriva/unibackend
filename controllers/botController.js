@@ -2882,7 +2882,15 @@ const enviarFichaCompletaTelegram = async (idevento, chatId) => {
         maxContentLength: Infinity
       });
     } catch (pdfError) {
-      console.warn('⚠️ No se pudo adjuntar PDF:', pdfError.message);
+      console.error('❌ No se pudo adjuntar PDF:', pdfError);
+      const fallbackMsg = '⚠️ No se pudo generar el PDF de la ficha técnica. Error:\n<pre>' +
+        (pdfError?.stack || pdfError?.message || String(pdfError)).substring(0, 1500) +
+        '</pre>';
+      await axios.post(`${TELEGRAM_API}/sendMessage`, {
+        chat_id: chatObjetivo,
+        text: fallbackMsg,
+        parse_mode: 'HTML'
+      }).catch(() => {});
     }
 
     return { ok: true, mensaje: 'Notificación completa enviada a Telegram' };
