@@ -1080,8 +1080,56 @@ const appChat = async (req, res) => {
     // 1. Si viene eventId, obtener el evento consultado
     if (Evento && eventId) {
       eventoConsultado = await Evento.findByPk(eventId, {
-        attributes: ['nombreevento', 'fechaevento', 'descripcion', 'lugarevento', 'estado', 'horaevento']
+        attributes: ['idevento', 'nombreevento', 'fechaevento', 'descripcion', 'lugarevento', 'estado', 'horaevento']
       });
+    }
+
+    // ── Enviar información a Telegram (botones del asistente) ──
+    const bajoMsg = (message || '').trim().toLowerCase();
+    const esPedidoTelegram = /^enviar.*telegram/.test(bajoMsg) || bajoMsg === 'enviar por telegram' || /enviar (reporte|resumen|ficha).*telegram/.test(bajoMsg);
+    if (esPedidoTelegram) {
+      const telegramChatId = usuario?.telegram_chat_id;
+      if (!usuario || !telegramChatId) {
+        return res.json({ reply: '❌ No tienes Telegram vinculado.\n\nVincula tu cuenta desde el bot de Telegram enviando tu email institucional (comando /vincular) y vuelve a intentarlo.', eventId: eventId || null });
+      }
+
+      const esFicha = bajoMsg.includes('ficha');
+
+      if (esFicha) {
+        let ideventoFicha = eventId || (eventoConsultado?.idevento) || null;
+        if (!ideventoFicha) {
+          const ultimoBot = [...history].reverse().find(m => m.role === 'bot' && m.text);
+          const matchID = ultimoBot && String(ultimoBot.text).match(/\(ID:\s*(\d+)\)/) || (ultimoBot && String(ultimoBot.text).match(/ID:\s*(\d+)/));
+          ideventoFicha = matchID ? matchID[1] : null;
+        }
+        if (!ideventoFicha) {
+          return res.json({ reply: '❌ No pude identificar el evento para enviar su ficha.\n\nPregúntale a la IA por un evento concreto y vuelve a pulsar "Enviar ficha por Telegram".', eventId: null });
+        }
+        const r = await enviarFichaCompletaTelegram(ideventoFicha, telegramChatId);
+        return res.json({ reply: r.ok ? `✅ Ficha completa del evento enviada a tu Telegram (incluye PDF).` : `❌ ${r.mensaje}`, eventId: String(ideventoFicha) });
+      }
+
+      // Enviar el texto de la última respuesta del asistente
+      const ultimoBot = [...history].reverse().find(m => m.role === 'bot' && m.text);
+      const texto = ultimoBot ? String(ultimoBot.text).substring(0, 4000) : 'Aquí tienes la información que pediste.';
+      try {
+        try {
+          await axios.post(`${TELEGRAM_API}/sendMessage`, {
+            chat_id: telegramChatId,
+            text: texto,
+            parse_mode: 'Markdown'
+          });
+        } catch (e1) {
+          await axios.post(`${TELEGRAM_API}/sendMessage`, {
+            chat_id: telegramChatId,
+            text: texto
+          });
+        }
+        return res.json({ reply: '✅ Información enviada a tu Telegram.', eventId: eventId || null });
+      } catch (e) {
+        console.error('❌ [BOT] Error enviando a Telegram:', e.message);
+        return res.json({ reply: '❌ Ocurrió un error al enviar a Telegram. Verifica tu vinculación o inténtalo de nuevo.', eventId: eventId || null });
+      }
     }
 
     // 2. Construir contexto en 2 partes: evento + eventos del usuario
@@ -2311,11 +2359,10 @@ const enviarNotificacionTelegram = async (evento, tipo) => {
     }
   }
 };
-const enviarNotificacionCompletaTelegram = async (req, res) => {
+// Envía la ficha completa (mensaje + PDF) de un evento a un chat de Telegram.
+// Devuelve { ok, mensaje }.
+const enviarFichaCompletaTelegram = async (idevento, chatId) => {
   try {
-    const { idevento } = req.body;
-    if (!idevento) return res.status(400).json({ error: 'Falta idevento' });
-
     const models = getModels();
     const { Evento, User, Academico, Facultad } = models;
 
@@ -2335,14 +2382,14 @@ const enviarNotificacionCompletaTelegram = async (req, res) => {
       ]
     });
 
-    if (!evento) return res.status(404).json({ error: 'Evento no encontrado' });
+    if (!evento) return { ok: false, mensaje: 'Evento no encontrado' };
 
     const creador = evento.academicoCreador;
     if (!creador || !creador.telegram_chat_id) {
-      return res.status(400).json({ error: 'El creador no tiene Telegram vinculado' });
+      return { ok: false, mensaje: 'El creador no tiene Telegram vinculado' };
     }
 
-    const chatId = creador.telegram_chat_id;
+    const chatObjetivo = chatId || creador.telegram_chat_id;
     const fechaEvento = new Date(evento.fechaevento).toLocaleDateString('es-ES', {
       year: 'numeric', month: 'long', day: 'numeric'
     });
@@ -2381,7 +2428,7 @@ const enviarNotificacionCompletaTelegram = async (req, res) => {
 
     // 3. Enviar el mensaje de texto con toda la info
     await axios.post(`${TELEGRAM_API}/sendMessage`, {
-      chat_id: chatId,
+      chat_id: chatObjetivo,
       text: mensaje,
       parse_mode: 'HTML'
     });
@@ -2390,7 +2437,7 @@ const enviarNotificacionCompletaTelegram = async (req, res) => {
     try {
       const pdfBuffer = await generarPDFEvento(evento, creador);
       const form = new FormData();
-      form.append('chat_id', chatId);
+      form.append('chat_id', chatObjetivo);
       form.append('document', pdfBuffer, {
         filename: `Evento_${evento.nombreevento.replace(/\s+/g, '_').substring(0, 30)}.pdf`,
         contentType: 'application/pdf'
@@ -2406,7 +2453,28 @@ const enviarNotificacionCompletaTelegram = async (req, res) => {
       console.warn('⚠️ No se pudo adjuntar PDF:', pdfError.message);
     }
 
-    res.json({ ok: true, message: 'Notificación completa enviada a Telegram' });
+    return { ok: true, mensaje: 'Notificación completa enviada a Telegram' };
+  } catch (error) {
+    console.error('❌ Error enviando resumen a Telegram:', error);
+    return { ok: false, mensaje: error.message };
+  }
+};
+
+const enviarNotificacionCompletaTelegram = async (req, res) => {
+  try {
+    const { idevento } = req.body;
+    if (!idevento) return res.status(400).json({ error: 'Falta idevento' });
+
+    const models = getModels();
+    const { Evento } = models;
+    const evento = await Evento.findByPk(idevento, {
+      include: [{ association: 'academicoCreador' }]
+    });
+    if (!evento) return res.status(404).json({ error: 'Evento no encontrado' });
+
+    const r = await enviarFichaCompletaTelegram(idevento, evento.academicoCreador?.telegram_chat_id);
+    if (!r.ok) return res.status(400).json({ error: r.mensaje });
+    res.json({ ok: true, message: r.mensaje });
   } catch (error) {
     console.error('❌ Error enviando resumen a Telegram:', error);
     res.status(500).json({ error: error.message });
