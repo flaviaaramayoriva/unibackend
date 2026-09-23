@@ -581,7 +581,7 @@ async function askGemini(userMessage, senderInfo = 'Invitado', eventosContexto =
 - Empieza con una frase corta y amable, termina con una pregunta de ayuda.
 - Responde SIEMPRE en español.
 
-${pedirCrearEvento ? `📝 Si el usuario quiere CREAR un evento, escribe primero "¡Claro! Te ayudo a crear el evento ✍️" y luego pregunta SOLO los datos que faltan (nombre, fecha, hora, lugar) de forma breve y amable. No inventes datos.` : ''}
+${pedirCrearEvento ? `📝 Si el usuario quiere CREAR un evento, escribe primero "¡Claro! Te ayudo a crear el evento ✍️" y luego pregunta SOLO los datos que faltan (nombre, fecha, hora, lugar) de forma breve y amable. No inventes datos. El lugar DEBE ser uno de estos lugares disponibles (campus o área):\n${LUGARES_PROMPT}\nNo aceptes ni sugieras otros lugares; pregunta o valida que el usuario elija uno de esos.` : ''}
 
 📊 CONTEXTO DEL SISTEMA (TUS EVENTOS REALES):
 ${eventosContexto || "Sin eventos registrados."}`;
@@ -845,6 +845,86 @@ function _parseFechaGuia(texto) {
   return null;
 }
 
+function _validarAnticipacionGuia(fechaISO) {
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const fecha = new Date(fechaISO); fecha.setHours(0, 0, 0, 0);
+  const dias = Math.round((fecha - hoy) / 86400000);
+  if (dias < 14) {
+    return {
+      valido: false,
+      dias,
+      mensaje: dias <= 0
+        ? 'No puedes crear eventos en fechas pasadas o el mismo día. El evento debe crearse con al menos 2 semanas (14 días) de anticipación.'
+        : `El evento debe crearse con al menos 2 semanas (14 días) de anticipación. Solo faltan ${dias} día(s) para la fecha seleccionada.`
+    };
+  }
+  return { valido: true, dias, mensaje: '' };
+}
+
+// ── LUGARES DISPONIBLES (2 campus con sus áreas) ───────────────────────────
+const LUGARES_CON_AREAS = [
+  { campus: 'Campus CalaCala', areas: ['Biblioteca', 'Hall', 'Boulevard'] },
+  { campus: 'Campus Central', areas: ['Auditorio', 'Jardín 1', 'Jardín 2', 'Biblioteca', 'Aula 310', 'Game Room'] },
+];
+
+const LUGARES_LISTA = (() => {
+  const lista = [];
+  LUGARES_CON_AREAS.forEach((c) => {
+    lista.push({ valor: c.campus, etiqueta: c.campus });
+    c.areas.forEach((area) => {
+      const valor = `${c.campus} – ${area}`;
+      lista.push({ valor, etiqueta: `${c.campus} – ${area}` });
+    });
+  });
+  return lista;
+})();
+
+const LUGARES_PROMPT = LUGARES_LISTA.map((l, i) => `   ${i + 1}. ${l.etiqueta}`).join('\n');
+
+function _normalizarLugarTexto(s) {
+  return (s || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function _parseLugarGuia(texto) {
+  const tConEsp = _normalizarLugarTexto(texto);
+  const t = tConEsp.replace(/\s+/g, '');
+  if (!t) return null;
+
+  const num = parseInt(t, 10);
+  if (/^\d{1,2}$/.test(t) && num >= 1 && num <= LUGARES_LISTA.length) {
+    return LUGARES_LISTA[num - 1].valor;
+  }
+
+  // 1) Coincidencia exacta con la etiqueta del lugar (ej: "Campus Central – Auditorio")
+  const exacto = LUGARES_LISTA.find(l => _normalizarLugarTexto(l.etiqueta) === tConEsp);
+  if (exacto) return exacto.valor;
+
+  // 2) Nombre de área exacto (ej: "Biblioteca", "Aula 310", "Game Room")
+  for (const c of LUGARES_CON_AREAS) {
+    for (const area of c.areas) {
+      if (_normalizarLugarTexto(area).replace(/\s+/g, '') === t) return `${c.campus} – ${area}`;
+    }
+  }
+
+  // 3) Alias de campus (ej: "calacala", "cala cala", "campucalacala", "central", "campucentral")
+  for (const c of LUGARES_CON_AREAS) {
+    const cNorm = _normalizarLugarTexto(c.campus).replace(/\s+/g, '');      // campuscalacala
+    const cSolo = cNorm.replace(/^campus/, '');                              // calacala / central
+    // texto que combine campus + área ("campuscentraauditorio", "calacalabiblioteca")
+    if (t.includes(cSolo)) {
+      for (const area of c.areas) {
+        if (t.includes(_normalizarLugarTexto(area).replace(/\s+/g, ''))) return `${c.campus} – ${area}`;
+      }
+      return c.campus;
+    }
+  }
+  return null;
+}
+
+function _formatearLugaresInvalido(lugar) {
+  return `⚠️ **"${lugar}"** no es un lugar válido. Los lugares disponibles son:\n${LUGARES_PROMPT}\n\nEscribe el **número** o el **nombre** del lugar.`;
+}
+
 function detectarIntencionCrear(t) {
   const s = (t || '').trim();
   const bajo = s.toLowerCase();
@@ -903,14 +983,22 @@ async function procesarCrearGuiado(senderKey, message, opts = {}) {
   if (step === 'fecha') {
     const fecha = _parseFechaGuia(t);
     if (!fecha) return { reply: '⚠️ Fecha no válida. Usa el formato **YYYY-MM-DD** (ej: 2026-10-15) o **DD/MM/AAAA**.' };
+    const antic = _validarAnticipacionGuia(fecha);
+    if (!antic.valido) {
+      return { reply: `⚠️ ${antic.mensaje}\n\n📅 Elige una fecha con al menos **2 semanas (14 días)** de anticipación (ej: con formato 2026-10-15).` };
+    }
     data.fechaevento = fecha;
     sesion.step = 'lugar';
     sesionesCrearApp.set(senderKey, sesion);
-    return { reply: `✅ Fecha: **${fecha}**\n\n📍 ¿Dónde se realizará? (ej: Auditorio, Aula 310, Biblioteca...)` };
+    return { reply: `✅ Fecha: **${fecha}**\n\n📍 ¿En qué lugar se realizará? Los disponibles son:\n${LUGARES_PROMPT}\n\nEscribe el número (1 o 2) o el nombre del campus.` };
   }
 
   if (step === 'lugar') {
-    data.lugarevento = t.slice(0, 100);
+    const lugar = _parseLugarGuia(t);
+    if (!lugar) {
+      return { reply: `⚠️ Ese lugar no está disponible. Los únicos lugares son:\n${LUGARES_PROMPT}\n\nEscribe el **número** (1 o 2) o el **nombre** del campus.` };
+    }
+    data.lugarevento = lugar;
     sesionesCrearApp.delete(senderKey);
 
     if (opts.crearDirecto && opts.models && opts.usuarioId) {
@@ -931,8 +1019,8 @@ async function procesarCrearGuiado(senderKey, message, opts = {}) {
         `selectedHour=${encodeURIComponent(data.horaevento.split(':')[0])}`,
         `lugarevento=${encodeURIComponent(data.lugarevento)}`
       ].join('&');
-      const creado = `✅ ¡Evento creado con éxito en estado **pendiente**!\n\n📝 ${r.evento.nombreevento}\n⏰ ${r.evento.horaevento}\n📅 ${r.evento.fechaevento}\n📍 ${r.evento.lugarevento}\n🆔 ID: ${r.idevento}\n\n📲 Completa los detalles restantes (presupuesto, comité, resultados) desde la app:\n${opts.abrirFormulario || `/admin/croq?${params}`}`;
-      return { reply: creado, abrirFormulario: opts.abrirFormulario || `/admin/croq?${params}` };
+      const creado = `✅ ¡Evento creado con éxito en estado **pendiente**!\n\n📝 ${r.evento.nombreevento}\n⏰ ${r.evento.horaevento}\n📅 ${r.evento.fechaevento}\n📍 ${r.evento.lugarevento}\n🆔 ID: ${r.idevento}\n\n📲 Completa los detalles restantes (presupuesto, comité, resultados) desde la app:\n${opts.abrirFormulario || `/admin/ProyectoEvento?${params}`}`;
+      return { reply: creado, abrirFormulario: opts.abrirFormulario || `/admin/ProyectoEvento?${params}` };
     }
 
     const params = [
@@ -947,7 +1035,7 @@ async function procesarCrearGuiado(senderKey, message, opts = {}) {
       `📅 Fecha: **${data.fechaevento}**\n` +
       `📍 Lugar: **${data.lugarevento}**\n\n` +
       `Te llevaré al formulario para completar los detalles restantes.`;
-    return { reply: resumen, abrirFormulario: `/admin/craq?${params}` };
+    return { reply: resumen, abrirFormulario: `/admin/ProyectoEvento?${params}` };
   }
 
   return null;
@@ -1095,23 +1183,31 @@ const appChat = async (req, res) => {
       const nombre = datos.nombreevento || '';
       const fecha = datos.fecha || '';
       const hora = (datos.hora || '').split(':')[0];
-      const lugar = datos.lugar || '';
+      const lugar = _parseLugarGuia(datos.lugar || '') || (datos.lugar || '');
+      const lugarValido = LUGARES_LISTA.some(l => l.valor === lugar);
+      const antic = fecha ? _validarAnticipacionGuia(fecha) : { valido: true };
 
-      const params = [
-        `nombreevento=${encodeURIComponent(nombre)}`,
-        `selectedDate=${encodeURIComponent(fecha)}`,
-        `selectedHour=${encodeURIComponent(hora)}`,
-        `lugarevento=${encodeURIComponent(lugar)}`
-      ].join('&');
+      if (!lugarValido) {
+        respuesta = _formatearLugaresInvalido(lugar);
+      } else if (!antic.valido) {
+        respuesta = `⚠️ ${antic.mensaje}\n\n📅 Elige una fecha con al menos **2 semanas (14 días)** de anticipación (ej: con formato 2026-10-15).`;
+      } else {
+        const params = [
+          `nombreevento=${encodeURIComponent(nombre)}`,
+          `selectedDate=${encodeURIComponent(fecha)}`,
+          `selectedHour=${encodeURIComponent(hora)}`,
+          `lugarevento=${encodeURIComponent(lugar)}`
+        ].join('&');
 
-      respuesta = `✅ **¡Perfecto! Te ayudo a crear tu evento.**\n\n` +
-        `📝 Nombre: **${nombre}**\n` +
-        (fecha ? `📅 Fecha: **${fecha}**\n` : '') +
-        (datos.hora ? `⏰ Hora: **${datos.hora}**\n` : '') +
-        (lugar ? `📍 Lugar: **${lugar}**\n` : '') +
-        (datos.descripcion ? `📝 Descripción: **${datos.descripcion}**\n` : '') +
-        `\n✍️ Completa los detalles restantes en el formulario y confirma tu evento.`;
-      abrirFormulario = `/admin/craq?${params}`;
+        respuesta = `✅ **¡Perfecto! Te ayudo a crear tu evento.**\n\n` +
+          `📝 Nombre: **${nombre}**\n` +
+          (fecha ? `📅 Fecha: **${fecha}**\n` : '') +
+          (datos.hora ? `⏰ Hora: **${datos.hora}**\n` : '') +
+          (lugar ? `📍 Lugar: **${lugar}**\n` : '') +
+          (datos.descripcion ? `📝 Descripción: **${datos.descripcion}**\n` : '') +
+          `\n✍️ Completa los detalles restantes en el formulario y confirma tu evento.`;
+        abrirFormulario = `/admin/ProyectoEvento?${params}`;
+      }
     } else if (respuesta && typeof respuesta === 'object' && respuesta.tipo === 'texto') {
       respuesta = respuesta.texto;
     }
@@ -2026,33 +2122,51 @@ eventosContexto += `👤 **Usuario:** ${usuario.nombre} ${usuario.apellidopat ||
       const replyRaw = await askGemini(text, usuario?.nombre || 'Usuario', eventosContexto, [], { pedirCrearEvento: pedirCrear });
       if (replyRaw && typeof replyRaw === 'object' && replyRaw.tipo === 'crear_evento') {
         const datos = replyRaw.datos || {};
-        const r = await crearEventoEnBD(models, usuario.idusuario, {
-          nombreevento: datos.nombreevento,
-          fechaevento: datos.fecha,
-          horaevento: datos.hora,
-          lugarevento: datos.lugar,
-          descripcion: datos.descripcion
-        });
-        if (r.ok) {
-          const params = [
-            `nombreevento=${encodeURIComponent(datos.nombreevento || '')}`,
-            `selectedDate=${encodeURIComponent(datos.fecha || '')}`,
-            `selectedHour=${encodeURIComponent((datos.hora || '').split(':')[0])}`,
-            `lugarevento=${encodeURIComponent(datos.lugar || '')}`
-          ].join('&');
+        const lugarNormalizado = _parseLugarGuia(datos.lugar || '');
+        const antic = datos.fecha ? _validarAnticipacionGuia(datos.fecha) : { valido: true };
+        if (datos.lugar && !LUGARES_LISTA.some(l => l.valor === datos.lugar) && datos.lugar !== lugarNormalizado) {
           await axios.post(`${TELEGRAM_API}/sendMessage`, {
             chat_id: chatId,
-            text: `✅ ¡Evento creado con éxito!\n\n📝 ${datos.nombreevento || 'Sin nombre'}\n⏰ ${datos.hora || 'Sin hora'}\n📅 ${datos.fecha || 'Sin fecha'}\n📍 ${datos.lugar || 'Sin lugar'}\n🆔 ID: ${r.idevento}\n\n📲 Puedes completar detalles (presupuesto, comité, resultados) desde la app:\n${'/admin/croq?' + params}`,
+            text: _formatearLugaresInvalido(datos.lugar),
             parse_mode: 'Markdown',
           });
+          usarGemini = false;
+        } else if (!antic.valido) {
+          await axios.post(`${TELEGRAM_API}/sendMessage`, {
+            chat_id: chatId,
+            text: `⚠️ ${antic.mensaje}\n\n📅 Inténtalo de nuevo indicando una fecha con al menos 2 semanas (14 días) de anticipación.`,
+            parse_mode: 'Markdown',
+          });
+          usarGemini = false;
         } else {
-          await axios.post(`${TELEGRAM_API}/sendMessage`, {
-            chat_id: chatId,
-            text: `❌ No pude crear el evento: ${r.mensaje}\n\nInténtalo de nuevo con "crear evento".`,
-            parse_mode: 'Markdown',
+          const r = await crearEventoEnBD(models, usuario.idusuario, {
+            nombreevento: datos.nombreevento,
+            fechaevento: datos.fecha,
+            horaevento: datos.hora,
+            lugarevento: lugarNormalizado || datos.lugar,
+            descripcion: datos.descripcion
           });
+          if (r.ok) {
+            const params = [
+              `nombreevento=${encodeURIComponent(datos.nombreevento || '')}`,
+              `selectedDate=${encodeURIComponent(datos.fecha || '')}`,
+              `selectedHour=${encodeURIComponent((datos.hora || '').split(':')[0])}`,
+              `lugarevento=${encodeURIComponent(datos.lugar || '')}`
+            ].join('&');
+            await axios.post(`${TELEGRAM_API}/sendMessage`, {
+              chat_id: chatId,
+              text: `✅ ¡Evento creado con éxito!\n\n📝 ${datos.nombreevento || 'Sin nombre'}\n⏰ ${datos.hora || 'Sin hora'}\n📅 ${datos.fecha || 'Sin fecha'}\n📍 ${datos.lugar || 'Sin lugar'}\n🆔 ID: ${r.idevento}\n\n📲 Puedes completar detalles (presupuesto, comité, resultados) desde la app:\n${'/admin/ProyectoEvento?' + params}`,
+              parse_mode: 'Markdown',
+            });
+          } else {
+            await axios.post(`${TELEGRAM_API}/sendMessage`, {
+              chat_id: chatId,
+              text: `❌ No pude crear el evento: ${r.mensaje}\n\nInténtalo de nuevo con "crear evento".`,
+              parse_mode: 'Markdown',
+            });
+          }
+          usarGemini = false;
         }
-        usarGemini = false;
       }
     }
 
