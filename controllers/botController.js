@@ -683,10 +683,6 @@ async function generarPDFEvento(evento, usuario) {
     const pages = doc.bufferedPageCount;
     for (let i = 0; i < pages; i++) {
       doc.switchToPage(i);
-      doc.fontSize(8).khulu();
-    }
-    for (let i = 0; i < pages; i++) {
-      doc.switchToPage(i);
       doc.save();
       doc.strokeColor('#dddddd').lineWidth(0.6).moveTo(50, 795).lineTo(545, 795).stroke();
       doc.fillColor('#999999').font('Helvetica').fontSize(8)
@@ -1273,7 +1269,15 @@ const appChat = async (req, res) => {
           return res.json({ reply: '❌ No pude identificar el evento para enviar su ficha.\n\nPregúntale a la IA por un evento concreto y vuelve a pulsar "Enviar ficha por Telegram".', eventId: null });
         }
         const r = await enviarFichaCompletaTelegram(ideventoFicha, telegramChatId);
-        return res.json({ reply: r.ok ? `✅ Ficha completa del evento enviada a tu Telegram (incluye PDF).` : `❌ ${r.mensaje}`, eventId: String(ideventoFicha) });
+        if (!r.ok) {
+          return res.json({ reply: `❌ ${r.mensaje}`, eventId: String(ideventoFicha) });
+        }
+        return res.json({
+          reply: r.pdfOk
+            ? `✅ Ficha completa del evento enviada a tu Telegram (incluye PDF).`
+            : `⚠️ Ficha enviada a tu Telegram, pero no se pudo generar el PDF. Revisa los detalles en el chat.`,
+          eventId: String(ideventoFicha)
+        });
       }
 
       // Enviar el texto de la última respuesta del asistente
@@ -2866,6 +2870,8 @@ const enviarFichaCompletaTelegram = async (idevento, chatId) => {
     }
 
     // 5. Generar y enviar el PDF adjunto
+    let pdfOk = true;
+    let pdfErrorMensaje = null;
     try {
       const pdfBuffer = await generarPDFEvento(evento, creador);
       const form = new FormData();
@@ -2882,6 +2888,8 @@ const enviarFichaCompletaTelegram = async (idevento, chatId) => {
         maxContentLength: Infinity
       });
     } catch (pdfError) {
+      pdfOk = false;
+      pdfErrorMensaje = pdfError?.message || String(pdfError);
       console.error('❌ No se pudo adjuntar PDF:', pdfError);
       const fallbackMsg = '⚠️ No se pudo generar el PDF de la ficha técnica. Error:\n<pre>' +
         (pdfError?.stack || pdfError?.message || String(pdfError)).substring(0, 1500) +
@@ -2893,7 +2901,10 @@ const enviarFichaCompletaTelegram = async (idevento, chatId) => {
       }).catch(() => {});
     }
 
-    return { ok: true, mensaje: 'Notificación completa enviada a Telegram' };
+    if (!pdfOk) {
+      return { ok: true, pdfOk: false, mensaje: `Ficha enviada a Telegram, pero el PDF no se pudo generar: ${pdfErrorMensaje}` };
+    }
+    return { ok: true, pdfOk: true, mensaje: 'Notificación completa enviada a Telegram' };
   } catch (error) {
     console.error('❌ Error enviando resumen a Telegram:', error);
     return { ok: false, mensaje: error.message };
