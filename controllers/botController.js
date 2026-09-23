@@ -423,7 +423,7 @@ async function generarPDFEvento(evento, usuario) {
 
     // ===== ENCABEZADO =====
     doc.save();
-    doc.rect(0, 0, 595, 110).fill(AZUL);
+    doc.rect(0, 0, 595, 110).fill(NARANJA);
     doc.roundedRect(50, 26, 8, 58, 4).fill(NARANJA);
     doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(26).text('UNIFRANZ', 72, 32);
     doc.fillColor('#ffd9c7').font('Helvetica').fontSize(12).text('Universidad Privada Franz Tamayo', 72, 62);
