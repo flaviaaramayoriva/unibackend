@@ -116,8 +116,6 @@ const generarLayoutIA = asyncHandler(async (req, res) => {
       });
     }
 
-    const fs = require('fs');
-    const path = require('path');
     const layoutsDir = path.join(__dirname, '..', 'uploads', 'layouts');
     if (!fs.existsSync(layoutsDir)) fs.mkdirSync(layoutsDir, { recursive: true });
 
@@ -202,11 +200,46 @@ function escapeXml(value = '') {
         .replace(/'/g, '&apos;');
 }
 
+// Clasifica un recurso del inventario en una categoría de dibujo.
+// 1º intenta reconocerlo por su nombre (más preciso: permite elegir el
+//    ícono exacto - pantalla, parlante, mesa, silla, vajilla).
+// 2º si el nombre no calza con ningún patrón conocido, usa el
+//    `recurso_tipo` que ya viene del inventario (tecnologico / mobiliario /
+//    vajilla) para al menos dibujar un ícono genérico de esa categoría,
+//    en vez de que el recurso desaparezca del plano y solo quede en texto.
+function clasificarRecurso(r) {
+    const nombre = (r.nombre_recurso || '').toLowerCase();
+    const tipo = (r.recurso_tipo || '').toLowerCase();
+
+    if (/pantalla|proyector|proyec|televisor|tv|plasma|lcd|led/.test(nombre)) return 'pantalla';
+    if (/sonido|parlante|bafle|altavoz|amplif|ac[uú]stic|tweeter|subwoofer|micr[oó]fono/.test(nombre)) return 'sonido';
+    if (/mesa|tabla|banquete|comedor/.test(nombre) && !/mantel/.test(nombre)) return 'mesa';
+    if (/silla|butaca|asiento|pupitre|banco/.test(nombre)) return 'silla';
+    if (/vajilla|plato|vaso|copa|taza|cubierto|servilleta|mantel/.test(nombre)) return 'vajilla';
+
+    if (tipo === 'tecnologico') return 'tecnologico';
+    if (tipo === 'mobiliario') return 'mobiliario';
+    if (tipo === 'vajilla') return 'vajilla';
+
+    return 'otro';
+}
+
 function dibujarRecursosEnSVG(svg, recursos) {
+    const buckets = { pantalla: [], sonido: [], mesa: [], silla: [], vajilla: [], tecnologico: [], mobiliario: [], otro: [] };
+    recursos.forEach(r => buckets[clasificarRecurso(r)].push(r));
+
+    const pantallas = buckets.pantalla;
+    const sonido = buckets.sonido;
+    const mesas = buckets.mesa;
+    const sillas = buckets.silla;
+    const vajilla = buckets.vajilla;
+    const tecnologicoGenerico = buckets.tecnologico;
+    const mobiliarioGenerico = buckets.mobiliario;
+    const otro = buckets.otro;
+
     let extra = '';
 
     // ── Pantallas / proyectores (frente del salón) ───────────────────────
-    const pantallas = recursos.filter(r => /pantalla|proyector|proyec|televisor|tv|plasma|lcd|led/.test(r.nombre_recurso.toLowerCase()));
     if (pantallas.length > 0) {
         extra += '<g id="rec-pantalla">';
         extra += '<rect x="196" y="52" width="108" height="62" rx="3" fill="#1e293b"/>';
@@ -217,7 +250,6 @@ function dibujarRecursosEnSVG(svg, recursos) {
     }
 
     // ── Sonido / parlantes (esquinas traseras) ───────────────────────────
-    const sonido = recursos.filter(r => /sonido|parlante|bafle|altavoz|amplif|caja acustica|caja acústica|tweet|subwoofer/.test(r.nombre_recurso.toLowerCase()));
     const nSonido = Math.min(Math.max(sonido.reduce((acc, r) => acc + (parseInt(r.cantidad) || 1), 0), 0), 4);
     if (nSonido > 0) {
         extra += '<g id="rec-sonido">';
@@ -231,7 +263,6 @@ function dibujarRecursosEnSVG(svg, recursos) {
     }
 
     // ── Mesas (distribuidas en la zona central/despejada) ─────────────────
-    const mesas = recursos.filter(r => /mesa|tabla|banquete|comedor/.test(r.nombre_recurso.toLowerCase()) && !/mantel/.test(r.nombre_recurso.toLowerCase()));
     let mesasDraw = '';
     let mesaIdx = 0;
     for (const m of mesas) {
@@ -253,10 +284,9 @@ function dibujarRecursosEnSVG(svg, recursos) {
     }
 
     // ── Sillas / butacas (acompañan a las mesas) ─────────────────────────
-    const sillas = recursos.filter(r => /silla|butaca|asiento|pupitre|banco/.test(r.nombre_recurso.toLowerCase()));
-    let sillasDraw = '';
     const nSillas = Math.min(sillas.reduce((acc, r) => acc + (parseInt(r.cantidad) || 1), 0), 40);
     if (nSillas > 0) {
+        let sillasDraw = '';
         for (let i = 0; i < nSillas; i++) {
             const col = i % 10;
             const row = Math.floor(i / 10);
@@ -268,28 +298,53 @@ function dibujarRecursosEnSVG(svg, recursos) {
     }
 
     // ── Vajilla (decoración sobre mesas) ──────────────────────────────────
-    const vajilla = recursos.filter(r => /vajilla|plato|vaso|copa|taza|cubierto|servilleta|mantel/.test(r.nombre_recurso.toLowerCase()));
     if (vajilla.length > 0 && mesaIdx > 0) {
-        extra += '<g id="rec-vajilla">';
         const nVajillas = vajilla.reduce((acc, r) => acc + (parseInt(r.cantidad) || 1), 0);
+        let vajillaDraw = '';
         for (let i = 0; i < Math.min(nVajillas, 24); i++) {
             const mesaX = 130 + (i % 4) * 80;
             const mesaY = 170 + Math.floor(i / 4) * 70;
             const offsetX = (i % 3 - 1) * 6;
             const offsetY = (Math.floor(i / 3) % 3 - 1) * 6;
-            extra += `<circle cx="${mesaX + offsetX}" cy="${mesaY + offsetY}" r="3" fill="#f59e0b" stroke="#b45309"/>`;
+            vajillaDraw += `<circle cx="${mesaX + offsetX}" cy="${mesaY + offsetY}" r="3" fill="#f59e0b" stroke="#b45309"/>`;
         }
-        extra += '</g>';
+        extra += `<g id="rec-vajilla">${vajillaDraw}</g>`;
     }
 
-    // ── Otros recursos (etiqueta con cantidad, esquina inferior derecha) ─
-    const otros = recursos.filter(r => !/(pantalla|proyector|proyec|televisor|tv|plasma|lcd|led|sonido|parlante|bafle|altavoz|amplif|mesa|tabla|banquete|comedor|silla|butaca|asiento|pupitre|banco|vajilla|plato|vaso|copa|taza|cubierto|servilleta|mantel)/.test(r.nombre_recurso.toLowerCase()));
+    // ── Tecnológico sin ícono específico (ej: router, extensión, cables):
+    //    franja de íconos genéricos arriba a la derecha, para que no
+    //    desaparezcan del plano solo porque el nombre no calzó con ningún
+    //    patrón conocido. ───────────────────────────────────────────────
+    if (tecnologicoGenerico.length > 0) {
+        let draw = '';
+        tecnologicoGenerico.slice(0, 6).forEach((r, i) => {
+            const x = 372 + (i % 3) * 24;
+            const y = 40 + Math.floor(i / 3) * 20;
+            draw += `<rect x="${x}" y="${y}" width="16" height="12" rx="2" fill="#0891b2"/>`;
+            draw += `<circle cx="${x + 8}" cy="${y + 6}" r="3" fill="#a5f3fc"/>`;
+        });
+        extra += `<g id="rec-tecnologico">${draw}</g>`;
+    }
 
-    // ── Leyenda de recursos en la parte inferior ──────────────────────────
+    // ── Mobiliario sin ícono específico (ej: biombos, atriles, tarimas):
+    //    franja de íconos genéricos abajo a la izquierda. ────────────────
+    if (mobiliarioGenerico.length > 0) {
+        let draw = '';
+        mobiliarioGenerico.slice(0, 6).forEach((r, i) => {
+            const x = 14 + (i % 3) * 24;
+            const y = 356 + Math.floor(i / 3) * 18;
+            draw += `<rect x="${x}" y="${y}" width="16" height="12" rx="2" fill="#78350f"/>`;
+            draw += `<rect x="${x + 2}" y="${y + 2}" width="12" height="8" rx="1" fill="#d97706"/>`;
+        });
+        extra += `<g id="rec-mobiliario">${draw}</g>`;
+    }
+
+    // ── Leyenda de recursos en la parte inferior (incluye TODOS los
+    //    recursos seleccionados, tengan o no ícono propio en el plano) ───
+    const todos = [...pantallas, ...sonido, ...mesas, ...sillas, ...vajilla, ...tecnologicoGenerico, ...mobiliarioGenerico, ...otro];
     let leyenda = '';
-    let lx = 14;
-    const todos = [...pantallas, ...sonido, ...mesas, ...sillas, ...vajilla, ...otros];
     if (todos.length > 0) {
+        let lx = 14;
         leyenda += '<g id="rec-leyenda">';
         todos.forEach(r => {
             const label = `${r.nombre_recurso} ×${r.cantidad}`;

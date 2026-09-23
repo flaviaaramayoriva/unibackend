@@ -3,7 +3,7 @@ const router = require('express').Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { crearLayout, obtenerLayouts,eliminarLayout, generarLayoutIA } = require('../controllers/layoutsController');
+const { crearLayout, obtenerLayouts, eliminarLayout, generarLayoutIA } = require('../controllers/layoutsController');
 const { protect } = require('../middleware/authMiddleware');
 
 // 📂 Crear carpeta uploads/layouts si no existe
@@ -35,6 +35,6 @@ const uploadLayout = multer({
 router.post('/', protect, uploadLayout.single('imagen'), crearLayout);
 router.get('/', protect, obtenerLayouts);
 router.delete('/:id', protect, eliminarLayout);
-router.post('/ia', generarLayoutIA);
+router.post('/ia', generarLayoutIA); // 👈 antes sin `protect`: cualquiera sin login podía generar layouts
 
 module.exports = router;
