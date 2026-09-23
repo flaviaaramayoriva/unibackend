@@ -343,6 +343,59 @@ const createEvento = async (req, res) => {
       }
       console.log('✅ Recursos nuevos creados y vinculados:', data.recursos_nuevos.length);
     }
+
+    // ── 9.5 RECURSOS IA (descontar inventario) ──────────────────────────────
+    if (Array.isArray(data.recursos_ia) && data.recursos_ia.length > 0) {
+      const [cantCol] = await sequelize.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_name = 'evento_recurso' AND column_name = 'cantidad' LIMIT 1`,
+        { transaction: t, type: sequelize.QueryTypes.SELECT }
+      );
+      const hasCantidadCol = !!cantCol;
+
+      for (const rec of data.recursos_ia) {
+        const idrecurso = parseInt(rec.idrecurso, 10);
+        const cantidad = parseInt(rec.cantidad, 10) || 1;
+        if (!idrecurso) continue;
+
+        const [stockRows] = await sequelize.query(
+          `SELECT cantidad FROM recurso WHERE idrecurso = ?`,
+          { replacements: [idrecurso], transaction: t }
+        );
+        const stock = parseInt(stockRows[0]?.cantidad, 10) || 0;
+        if (stock < cantidad) {
+          throw new Error(`Stock insuficiente para el recurso con id ${idrecurso}`);
+        }
+
+        await sequelize.query(
+          `UPDATE recurso SET cantidad = cantidad - ? WHERE idrecurso = ?`,
+          { replacements: [cantidad, idrecurso], transaction: t }
+        );
+
+        const [existe] = await sequelize.query(
+          `SELECT idrecurso FROM evento_recurso WHERE idevento = ? AND idrecurso = ?`,
+          { replacements: [nuevoEventoId, idrecurso], transaction: t }
+        );
+        if (existe.length > 0) {
+          if (hasCantidadCol) {
+            await sequelize.query(
+              `UPDATE evento_recurso SET cantidad = cantidad + ? WHERE idevento = ? AND idrecurso = ?`,
+              { replacements: [cantidad, nuevoEventoId, idrecurso], transaction: t }
+            );
+          }
+        } else if (hasCantidadCol) {
+          await sequelize.query(
+            `INSERT INTO evento_recurso (idevento, idrecurso, cantidad) VALUES (?, ?, ?)`,
+            { replacements: [nuevoEventoId, idrecurso, cantidad], transaction: t }
+          );
+        } else {
+          await sequelize.query(
+            `INSERT INTO evento_recurso (idevento, idrecurso) VALUES (?, ?)`,
+            { replacements: [nuevoEventoId, idrecurso], transaction: t }
+          );
+        }
+      }
+      console.log('✅ Recursos IA descontados del inventario:', data.recursos_ia.length);
+    }
  
     // ── 10. PRESUPUESTO ──────────────────────────────────────────────────────
     if (data.presupuesto) {
@@ -675,6 +728,65 @@ const updateEvento = asyncHandler(async (req, res) => {
         transaction: t
       });
       if (faseObj) evento.idfase = faseObj.idfase;
+    }
+
+    // RECURSOS IA: revertir descuento previo y aplicar el nuevo conjunto
+    if (Array.isArray(req.body.recursos_ia) && req.body.recursos_ia.length > 0) {
+      const [cantCol] = await sequelize.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_name = 'evento_recurso' AND column_name = 'cantidad' LIMIT 1`,
+        { transaction: t, type: sequelize.QueryTypes.SELECT }
+      );
+      const hasCantidadCol = !!cantCol;
+
+      const [prevRows] = await sequelize.query(
+        `SELECT idrecurso, cantidad FROM evento_recurso WHERE idevento = ?`,
+        { replacements: [evento.idevento], transaction: t }
+      );
+      for (const prev of prevRows) {
+        const cant = parseInt(prev.cantidad, 10) || 0;
+        if (cant > 0) {
+          await sequelize.query(
+            `UPDATE recurso SET cantidad = cantidad + ? WHERE idrecurso = ?`,
+            { replacements: [cant, prev.idrecurso], transaction: t }
+          );
+        }
+      }
+      await sequelize.query(
+        `DELETE FROM evento_recurso WHERE idevento = ?`,
+        { replacements: [evento.idevento], transaction: t }
+      );
+
+      for (const rec of req.body.recursos_ia) {
+        const idrecurso = parseInt(rec.idrecurso, 10);
+        const cantidad = parseInt(rec.cantidad, 10) || 1;
+        if (!idrecurso) continue;
+
+        const [stockRows] = await sequelize.query(
+          `SELECT cantidad FROM recurso WHERE idrecurso = ?`,
+          { replacements: [idrecurso], transaction: t }
+        );
+        const stock = parseInt(stockRows[0]?.cantidad, 10) || 0;
+        if (stock < cantidad) {
+          throw new Error(`Stock insuficiente para el recurso con id ${idrecurso}`);
+        }
+
+        await sequelize.query(
+          `UPDATE recurso SET cantidad = cantidad - ? WHERE idrecurso = ?`,
+          { replacements: [cantidad, idrecurso], transaction: t }
+        );
+        if (hasCantidadCol) {
+          await sequelize.query(
+            `INSERT INTO evento_recurso (idevento, idrecurso, cantidad) VALUES (?, ?, ?)`,
+            { replacements: [evento.idevento, idrecurso, cantidad], transaction: t }
+          );
+        } else {
+          await sequelize.query(
+            `INSERT INTO evento_recurso (idevento, idrecurso) VALUES (?, ?)`,
+            { replacements: [evento.idevento, idrecurso], transaction: t }
+          );
+        }
+      }
+      console.log('✅ Recursos IA actualizados en edición');
     }
 
     await evento.save({ transaction: t });
